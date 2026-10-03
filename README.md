@@ -28,7 +28,7 @@ The audio pipeline decodes to 16-bit stereo and resamples to 48 kHz, including F
 
 ## Update over USB
 
-Clone this private repository and run `tools/update.sh /dev/cu.usbmodemDEVICE`. It verifies packaged checksums, installs a pinned esptool in a local virtual environment if necessary, and flashes separate regions to preserve preferences. No ESP-IDF, Chinese phone number or OSHWhub download is needed. `tools/update.sh --check` verifies files without touching the device. Bluetooth/WiFi firmware OTA is not implemented.
+Clone this private repository and run `tools/update.sh /dev/cu.usbmodemDEVICE`. It fetches the private GitHub release if local firmware is absent, verifies checksums, installs a pinned esptool in a local virtual environment if necessary, and flashes separate regions to preserve preferences. No ESP-IDF, Chinese phone number or OSHWhub download is needed. `tools/update.sh --check` verifies files without touching the device. Bluetooth/WiFi firmware OTA is not implemented.
 
 ## Build and flash
 
@@ -41,7 +41,7 @@ tools/build.sh
 tools/flash.sh /dev/cu.usbmodemDEVICE
 ```
 
-`dist/pearl-player-merged.bin` is the complete image for flash offset zero. `dist/SHA256SUMS` identifies the packaged artifacts. Button GPIOs and the volume cap are configurable through menuconfig. This build has been tested on the CS43131 unit; the PCM5102 variant is not verified.
+Firmware binaries are [private release assets](https://github.com/muness/PearlPod/releases/tag/v0.1.0), excluded from Git history. Run `tools/fetch-firmware.sh` (requires GitHub CLI signed in with repository access) to download and verify them. `dist/pearl-player-merged.bin` is the complete image for flash offset zero. `dist/SHA256SUMS` identifies the packaged artifacts. Button GPIOs and the volume cap are configurable through menuconfig. This build has been tested on the CS43131 unit; the PCM5102 variant is not verified.
 
 A full original flash backup is kept locally at `backups/factory-020000000001.bin`. To restore with ESP-IDF’s Python environment:
 

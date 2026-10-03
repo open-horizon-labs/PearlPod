@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")/.."
+[ -f dist/known-working-c9e6efd.bin ] || ./tools/fetch-firmware.sh
 if [ ! -x .flash-venv/bin/python ]; then
  python3 -m venv .flash-venv
  .flash-venv/bin/python -m pip install 'esptool==4.12.0'

@@ -2,6 +2,7 @@
 # USB update without an ESP-IDF installation; never erases the NVS region.
 set -eu
 cd "$(dirname "$0")/.."
+[ -f dist/SHA256SUMS ] || ./tools/fetch-firmware.sh
 shasum -a 256 -c dist/SHA256SUMS
 if [ "${1:-}" = --check ]; then exit 0; fi
 port=${1:?Usage: tools/update.sh /dev/cu.usbmodem... (or --check)}

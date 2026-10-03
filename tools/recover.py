@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 
 ROOT = Path(__file__).resolve().parent.parent
-IMAGE = ROOT / 'recovery/known-working-c9e6efd.bin'
+IMAGE = ROOT / 'dist/known-working-c9e6efd.bin'
 EXPECTED_SHA = 'a6be8c85fe01303fe43d4c3b53ab167256759f2e20cd9c3a1ff62491d78a5860'
 DEVICE_MAC = '020000000001'
 

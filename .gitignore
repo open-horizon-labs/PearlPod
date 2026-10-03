@@ -12,3 +12,7 @@ __pycache__/
 # Real microSD provisioning credentials; examples use a different suffix.
 wifi.toml
 custom.toml
+
+# Firmware is distributed through private GitHub releases.
+dist/
+recovery/
