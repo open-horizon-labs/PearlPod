@@ -20,19 +20,37 @@ static atomic_bool busy, cancel;
 
 static atomic_int stage;
 
-static const char *messages[] = {"Sync is off",
-                                 "Connecting to WiFi...",
-                                 "Finding library...",
-                                 "Syncing music...",
-                                 "Checking update...",
-                                 "Synced!",
-                                 "Sync failed. Existing music kept.",
-                                 "Pause music, then sync again.",
-                                 "Card full. Existing music kept."};
-
+extern unsigned pearl_ftp_received_bytes(void);
+extern void pearl_ftp_reset_progress(void);
+static atomic_uint elapsed, quiet, transferred;
+static const char *messages[] = {
+ "Ready to sync\n\nAdd PP: playlists in Plex. Keep the library computer running. Pause music before starting.",
+ "Connecting to WiFi\nUsing your saved networks.",
+ "Finding your library\nLooking for the library computer on WiFi.",
+ "Waiting for your library\nThe computer is checking which files are needed.",
+ "Checking your music\nVerifying the update before adding it.",
+ "Your music is ready!\nOpen Playlists to listen. WiFi is turning off.",
+ "Sync stopped\nYour existing music is safe. Check the library computer, then try again.",
+ "Pause your music first\nThen tap Start sync again.",
+ "The card is full\nFree some space on the card, then try again.",
+ "Could not connect\nOpen WiFi setup, check your network, then try again.",
+ "Library not found\nKeep the sync service running on the same WiFi, then try again.",
+ "Library is preparing\nThe computer is not ready yet. Try again shortly.",
+ "Library is busy\nAnother sync is running. Try again shortly.",
+ "Sync cancelled\nYour existing music is safe.",
+ "Connection lost\nCheck WiFi, then try again. Your existing music is safe.",
+ "Sync timed out\nCheck the library computer, then try again. Your existing music is safe."
+};
 void pearl_sync_status(char *out, unsigned size) {
-  snprintf(out, size, "%s", messages[atomic_load(&stage)]);
+ unsigned current=atomic_load(&stage), bytes=atomic_load(&transferred);
+ if(current==3 && bytes) {
+  unsigned kb=bytes/1024;
+  snprintf(out,size,"Receiving your music\n%u.%u MB received\n\nLast data: %u sec ago\nElapsed: %u:%02u%s",kb/1024,(kb%1024)*10/1024,atomic_load(&quiet),atomic_load(&elapsed)/60,atomic_load(&elapsed)%60,atomic_load(&quiet)>=30?"\nWaiting for the computer...":"");
+ } else if(atomic_load(&busy))
+  snprintf(out,size,"%s\n\nElapsed: %u:%02u",messages[current],atomic_load(&elapsed)/60,atomic_load(&elapsed)%60);
+ else snprintf(out,size,"%s",messages[current]);
 }
+void pearl_sync_cancel(void) { atomic_store(&cancel,true); }
 bool pearl_sync_busy(void) { return atomic_load(&busy); }
 bool pearl_sync_source(const char *url) {
   if (strncmp(url, "http://", 7) || strlen(url) > 160 || strchr(url, '\n') ||
@@ -59,6 +77,8 @@ static __attribute__((noinline)) bool connected(void) {
 static void task(void *arg) {
   (void)arg;
   bool ftp = false, dns = false, success = false, card_full = false;
+  int failure=6;
+  int64_t session_start=esp_timer_get_time();
   stage = 1;
   pearl_network_connect();
 
@@ -66,10 +86,10 @@ static void task(void *arg) {
 
   while (!atomic_load(&cancel) && !connected() &&
          esp_timer_get_time() - start < 40000000) {
+    elapsed=(esp_timer_get_time()-session_start)/1000000;
     vTaskDelay(pdMS_TO_TICKS(200));
   }
-  if (atomic_load(&cancel) || !connected())
-    goto done;
+  if (atomic_load(&cancel) || !connected()) { failure=9; goto done; }
 
   stage = 2;
   char url[200] = {0};
@@ -108,8 +128,7 @@ static void task(void *arg) {
       }
     }
   }
-  if (!url[0])
-    goto done;
+  if (!url[0]) { failure=10; goto done; }
 
   mkdir("/sdcard/music/.pearl", 0755);
   mkdir("/sdcard/music/.pearl/objects", 0755);
@@ -164,12 +183,14 @@ static void task(void *arg) {
   int status = esp_http_client_get_status_code(client);
   esp_http_client_cleanup(client);
 
-  if (result != ESP_OK || status != 202)
-    goto done;
+  if (result != ESP_OK || status != 202) {
+    failure=status==503?11:status==409?12:6; goto done;
+  }
 
   stage = 3;
   start = esp_timer_get_time();
-  int64_t last = start;
+  int64_t last = start, last_data=start;
+  unsigned prior_bytes=0;
 
   while (!atomic_load(&cancel) && esp_timer_get_time() - start < 840000000 &&
          connected()) {
@@ -178,6 +199,10 @@ static void task(void *arg) {
     if (ftp_run((now - last) / 1000) < 0)
       break;
     last = now;
+    unsigned bytes=pearl_ftp_received_bytes();
+    if(bytes!=prior_bytes) { last_data=now;prior_bytes=bytes; }
+    transferred=bytes;quiet=(now-last_data)/1000000;
+    elapsed=(now-session_start)/1000000;
 
     FILE *failed = ftp_getstate() == E_FTP_STE_READY
                        ? fopen("/sdcard/music/.pearl/error.txt", "rb") : NULL;
@@ -210,6 +235,8 @@ static void task(void *arg) {
     }
     vTaskDelay(pdMS_TO_TICKS(5));
   }
+  if (!success && !card_full && !connected()) failure=14;
+  else if (!success && esp_timer_get_time()-start>=840000000) failure=15;
 done:
   if (ftp)
     pearl_ftp_close();
@@ -218,11 +245,12 @@ done:
     mdns_free();
 
   pearl_network_off();
-  stage = success ? 5 : card_full ? 8 : 6;
+  stage = success ? 5 : cancel ? 13 : card_full ? 8 : failure;
   busy = false;
   vTaskDelete(NULL);
 }
 void pearl_sync_start(void) {
+  if (atomic_load(&busy)) return;
   if (!pearl_audio_state().paused) {
     stage = 7;
     return;
@@ -230,6 +258,9 @@ void pearl_sync_start(void) {
   if (atomic_exchange(&busy, true))
     return;
   cancel = false;
+  elapsed=quiet=transferred=0;
+  pearl_ftp_reset_progress();
+  stage=1;
 
   if (xTaskCreate(task, "sync", 8192, NULL, 2, NULL) != pdPASS) {
     busy = false;

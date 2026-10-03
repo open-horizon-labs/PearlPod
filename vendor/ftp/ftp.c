@@ -81,6 +81,10 @@ static uint8_t ftp_stop = 0;
  DECLARE PRIVATE DATA
  ******************************************************************************/
 static ftp_data_t ftp_data = {0};
+#include <stdatomic.h>
+static atomic_uint received_bytes;
+unsigned pearl_ftp_received_bytes(void) { return atomic_load(&received_bytes); }
+void pearl_ftp_reset_progress(void) { atomic_store(&received_bytes,0); }
 static char *ftp_path = NULL;
 static char *ftp_scratch_buffer = NULL;;
 static char *ftp_cmd_buffer = NULL;
@@ -174,6 +178,7 @@ static ftp_result_t ftp_read_file (char *filebuf, uint32_t desiredsize, uint32_t
 static ftp_result_t ftp_write_file (char *filebuf, uint32_t size) {
 	ftp_result_t result = E_FTP_RESULT_FAILED;
 	uint32_t actualsize = fwrite(filebuf, 1, size, ftp_data.fp);
+    atomic_fetch_add(&received_bytes,actualsize);
 	if (actualsize == size) {
 		result = E_FTP_RESULT_OK;
 	} else {

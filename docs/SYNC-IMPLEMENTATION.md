@@ -57,3 +57,9 @@ The selected mechanism remains HTTP-triggered lftp into a temporary receiver. Sc
 | Nightly charging / Roon / word timing | Outside current manual Plex scope; truthful charging signal and exact Roon intake are not established | Add timer wake based on USB host presence or fuzzy Roon matching |
 
 Run `.sync-venv/bin/python tools/check_sync_service.py --host <host-LAN-IP>` with the host service running for the real NAS HTTP/FTP acceptance check. This deliberately uses a temporary native FTP socket harness and makes no claim about a physical Pod. Tokens remain on the host. There is no generated music in the preparation checks.
+
+## Sync feedback
+
+Sync opens a dedicated 460×460 screen with PP: playlist guidance, a Start sync / Cancel sync action, elapsed time and byte counts from actual FTP writes. Once data arrives it reports time since the last write, and after 30 seconds without data it explicitly says it is waiting for the computer. No total or percentage is invented: transfer size is unknown on the device. Connection, discovery, waiting, verification, success, cancellation, WiFi loss, full card, server preparation/busy and timeout each have recovery copy. Existing managed catalog activation remains transactional.
+
+Local firmware build and LVGL touch/render harness cover ready, waiting, receiving, failure and success screens. Native FTP sanitizer integration verifies received-byte counters and interrupted/full-card transfers. Physical screen and real WiFi sync acceptance remain separate from these checks.

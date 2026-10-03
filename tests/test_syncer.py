@@ -99,6 +99,7 @@ class SyncTests(unittest.TestCase):
             finally:
                 process.terminate();out,err=process.communicate(timeout=5)
                 self.assertNotIn(b'AddressSanitizer',err);self.assertNotIn(b'runtime error:',err)
+                self.assertGreaterEqual(int(out.split(b'RECEIVED ')[-1].splitlines()[0]),len(data))
 
     def test_interrupted_and_full_transfer(self):
         import subprocess,time,os
@@ -108,13 +109,13 @@ class SyncTests(unittest.TestCase):
                 root=Path(directory);cache=root/'cache';pod=root/'pod';pod.mkdir();(pod/'existing-music').write_bytes(b'Keep me');(cache/'objects').mkdir(parents=True);(cache/'catalogs').mkdir()
                 data=b'fixture'*600000;name=hashlib.sha256(data).hexdigest()+'.mp3';(cache/'objects'/name).write_bytes(data)
                 catalog=(json.dumps({'file':name,'bytes':len(data)})+'\n').encode();sha=hashlib.sha256(catalog).hexdigest();(cache/'catalogs'/sha).write_bytes(catalog)
-                env=dict(os.environ);env['PEARL_FTP_DELAY_US']='1'
+                env=dict(os.environ);env['PEARL_FTP_DELAY_US']='20000' if mode=='interrupted' else '5000'
                 if mode=='full':env['PEARL_FTP_LIMIT']='1'
                 process=subprocess.Popen(['/tmp/pearl-ftp-host',str(pod)],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
                 try:
                     time.sleep(.1)
                     expected=subprocess.TimeoutExpired if mode=='interrupted' else subprocess.CalledProcessError
-                    with self.assertRaises(expected):deliver(cache,{'catalog':sha},ip,2121,1.5 if mode=='interrupted' else 10)
+                    with self.assertRaises(expected):deliver(cache,{'catalog':sha},ip,2121,5 if mode=='interrupted' else 10)
                     self.assertFalse((pod/'ready').exists());self.assertEqual((pod/'existing-music').read_bytes(),b'Keep me')
                     partial=pod/'objects'/name;self.assertTrue(partial.is_file());self.assertLess(partial.stat().st_size,len(data))
                     if mode=='interrupted':
