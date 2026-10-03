@@ -19,6 +19,7 @@
 #include "power.h"
 #include "power_policy.h"
 #include "sync.h"
+#include "tracer.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/rtc_io.h"
 #include "esp_vfs_fat.h"
@@ -477,6 +478,15 @@ static void example_lvgl_port_task(void *arg)
 }
 
 void pearl_console_start(pearl_library *lib);
+void pearl_trace_audio_restore(void){pearl_audio_attach(&music);}
+void pearl_sd_bench(void){
+    if(atomic_load(&rescan_running)){printf("PEARL tracer_sd refused=library_scan\n");return;}
+    char source[PEARL_PATH]={0};
+    if(pearl_library_lock()){if(music.track_count)snprintf(source,sizeof(source),"%s",music.tracks[0].path);pearl_library_unlock();}
+    if(!pearl_audio_state().paused||pearl_sync_busy()||pearl_trace_sd_busy()||!pearl_audio_detach())return;
+    pearl_trace_sd(source);
+    if(!pearl_trace_sd_busy())pearl_trace_audio_restore();
+}
 static void library_task(void *arg);
 static void buttons_task(void *arg);
 
@@ -670,8 +680,8 @@ static void library_task(void *arg)
     slot.flags|=SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
     esp_vfs_fat_sdmmc_mount_config_t cfg={.format_if_mount_failed=false,.max_files=12,.allocation_unit_size=16384};
     sdmmc_card_t *card=NULL;esp_err_t e=esp_vfs_fat_sdmmc_mount("/sdcard",&host,&slot,&cfg,&card);
-    if(e!=ESP_OK){free(sd_dma);sd_dma=NULL;}
-    else {mounted_card=card;sd_dma_bytes=sd_dma?8192:0;}
+    if(e!=ESP_OK){ESP_LOGE("pearl","SD mount failed: %s (0x%x)",esp_err_to_name(e),(unsigned)e);free(sd_dma);sd_dma=NULL;}
+    else {mounted_card=card;sd_dma_bytes=sd_dma?8192:0;pearl_trace_attach(card);}
     if(e==ESP_OK)ESP_LOGW("pearl","SDMMC actual_khz=%d bus_width=%d sector=%d bounce_bytes=%u chunk_sectors=%u",card->real_freq_khz,card->log_bus_width==2?4:1,card->csd.sector_size,sd_dma?8192u:0u,16u);
     const char *err="";
     if(e!=ESP_OK)err="Card not ready. Insert a FAT32 card and restart.";
@@ -696,7 +706,7 @@ static void rescan_task(void *arg){
     ESP_LOGW("pearl","Rescan result=%d albums=%u tracks=%u",result,music.album_count,music.track_count);
     rescan_running=false;vTaskDelete(NULL);
 }
-void pearl_library_rescan(void){if(atomic_exchange(&rescan_running,true))return;if(xTaskCreate(rescan_task,"rescan",8192,NULL,2,&rescan_task_handle)!=pdPASS)rescan_running=false;}
+void pearl_library_rescan(void){if(pearl_trace_sd_busy())return;if(atomic_exchange(&rescan_running,true))return;if(xTaskCreate(rescan_task,"rescan",8192,NULL,2,&rescan_task_handle)!=pdPASS)rescan_running=false;}
 static void buttons_task(void *arg)
 {
     const int up=CONFIG_PEARL_BUTTON_UP,down=CONFIG_PEARL_BUTTON_DOWN;
@@ -717,7 +727,7 @@ static void buttons_task(void *arg)
         pearl_state playback=pearl_audio_state();bool playing=playback.ready&&!playback.paused;
         if(playing||was_playing){paused_since=now;}
         was_playing=playing;
-        pearl_power_input policy={.now=now,.last_activity=pearl_power_last_activity(),.paused_since=paused_since,.screen_timeout=CONFIG_PEARL_SCREEN_TIMEOUT_SEC*1000u,.idle_timeout=CONFIG_PEARL_IDLE_SLEEP_SEC*1000u,.playing=playing,.screen_asleep=screen_locked,.network=pearl_network_enabled(),.busy=pearl_sync_busy()||atomic_load(&rescan_running)||!atomic_load(&library_ready),.usb_connected=usb_serial_jtag_is_connected(),.button_released=gpio_get_level(up)&&gpio_get_level(down),.deep_supported=pearl_power_deep_supported()};
+        pearl_power_input policy={.now=now,.last_activity=pearl_power_last_activity(),.paused_since=paused_since,.screen_timeout=CONFIG_PEARL_SCREEN_TIMEOUT_SEC*1000u,.idle_timeout=CONFIG_PEARL_IDLE_SLEEP_SEC*1000u,.playing=playing,.screen_asleep=screen_locked,.network=pearl_network_enabled(),.busy=pearl_sync_busy()||pearl_trace_sd_busy()||atomic_load(&rescan_running)||!atomic_load(&library_ready),.usb_connected=usb_serial_jtag_is_connected(),.button_released=gpio_get_level(up)&&gpio_get_level(down),.deep_supported=pearl_power_deep_supported()};
         pearl_power_action action=pearl_power_decide(&policy);
         if(action==PEARL_POWER_SCREEN_SLEEP)display_sleep(true,false);
         if(action==PEARL_POWER_DEEP_SLEEP)enter_standby();
@@ -732,6 +742,9 @@ static void display_sleep(bool asleep,bool manual){
     example_lvgl_unlock();
 }
 static void enter_standby(void){
+    pearl_trace_cancel();
+    for(unsigned i=0;i<250&&pearl_trace_sd_busy();i++)vTaskDelay(pdMS_TO_TICKS(20));
+    if(pearl_trace_sd_busy()){pearl_power_activity();return;}
     if(!pearl_sync_shutdown()){ESP_LOGW("pearl","Sync closing; hold again to sleep.");pearl_power_activity();return;}
     if(!pearl_network_shutdown()){ESP_LOGW("pearl","WiFi shutdown pending; hold again to sleep.");pearl_power_activity();return;}
     const int up=CONFIG_PEARL_BUTTON_UP;

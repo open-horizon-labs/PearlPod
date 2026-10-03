@@ -27,7 +27,35 @@ class SyncTests(unittest.TestCase):
             with patch('publisher.snapshot',return_value=empty):
                 head=publish(None,Path('/source'),Path('/music'),cache)
             self.assertEqual(head['objects'],0)
-            self.assertEqual((cache/'catalogs'/head['catalog']).read_bytes(),b'{"format":1}\n')
+            self.assertEqual((cache/'catalogs'/head['catalog']).read_bytes(),b'{"format":2}\n')
+
+    def test_readable_layout_and_delivery(self):
+        from layout import component,valid_path
+        self.assertEqual(component('Bad/Album: Name?'), 'Bad_Album_ Name_')
+        self.assertFalse(valid_path('../outside.mp3'))
+        self.assertFalse(valid_path('Artist/../outside.mp3'))
+        self.assertTrue(valid_path('P!nk/Album/01 - Song.mp3'))
+        import subprocess,time,ftplib
+        cache=Path('.sync-state/cache');head=json.loads((cache/'head.json').read_text())
+        if head.get('format')!=2:self.skipTest('Readable NAS export not prepared')
+        rows=[json.loads(x) for x in (cache/'catalogs'/head['catalog']).read_text().splitlines()]
+        with tempfile.TemporaryDirectory() as directory:
+            pod=Path(directory)
+            process=subprocess.Popen(['/tmp/pearl-ftp-host',str(pod)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            try:
+                time.sleep(.2);deliver(cache,head,'192.0.2.101',2121,60,free_bytes=1024**3)
+                for row in rows:
+                    if 'file' in row:self.assertEqual((pod/row['file']).stat().st_size,row['bytes'])
+                playlist=next(row['playlist'] for row in rows if 'playlist' in row)
+                entries=[x for x in (pod/playlist).read_text().splitlines() if x and not x.startswith('#')]
+                self.assertEqual(len(entries),30)
+                for entry in entries:self.assertTrue((pod/playlist).parent.joinpath(entry).is_file())
+                mtimes={row['file']:(pod/row['file']).stat().st_mtime_ns for row in rows if 'file' in row}
+                deliver(cache,head,'192.0.2.101',2121,30,free_bytes=1024**3)
+                self.assertEqual(mtimes,{name:(pod/name).stat().st_mtime_ns for name in mtimes})
+            finally:
+                process.terminate();out,err=process.communicate(timeout=5)
+                self.assertNotIn(b'AddressSanitizer',err);self.assertNotIn(b'runtime error:',err)
 
     def test_source_cache_invalidation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -67,8 +95,10 @@ class SyncTests(unittest.TestCase):
         tracks=[row for row in records if 'track' in row]
         self.assertTrue(tracks)
         for track in tracks:
-            audio=cache/'objects'/track['track']
-            self.assertEqual(digest(audio),track['track'][:64])
+            objects={row['file']:row.get('cache_source',row['file']) for row in records if 'file' in row}
+            source=objects[track['track']]
+            audio=cache/'objects'/source
+            self.assertEqual(digest(audio),source[:64])
             tags=ID3(audio)
             self.assertTrue(tags.getall('TIT2'))
             self.assertTrue(tags.getall('TALB'))
@@ -108,6 +138,29 @@ class SyncTests(unittest.TestCase):
                 process.terminate();out,err=process.communicate(timeout=5)
                 self.assertNotIn(b'AddressSanitizer',err);self.assertNotIn(b'runtime error:',err)
                 self.assertGreaterEqual(int(out.split(b'RECEIVED ')[-1].splitlines()[0]),len(data))
+
+    def test_ram_probe_is_explicit_and_does_not_write_card(self):
+        import io, os, subprocess, time, ftplib
+        connection=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);connection.connect(('192.0.2.2',32400));ip=connection.getsockname()[0];connection.close()
+        data=b'Diagnostic transport bytes'*100000
+        for armed in (False,True):
+            with tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);(root/'.pearl').mkdir()
+                env=dict(os.environ)
+                if armed:env['PEARL_FTP_RAM_PROBE']='1'
+                process=subprocess.Popen(['/tmp/pearl-ftp-host',directory],env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                try:
+                    time.sleep(.2)
+                    with ftplib.FTP() as ftp:
+                        ftp.connect(ip,2121,timeout=10)
+                        self.assertTrue(ftp.storbinary('STOR /.pearl/.bench-ram',io.BytesIO(data)).startswith('226'))
+                        self.assertEqual((root/'.pearl/.bench-ram').exists(),not armed)
+                        ftp.storbinary('STOR /.pearl/normal.tmp',io.BytesIO(data))
+                        self.assertEqual((root/'.pearl/normal.tmp').read_bytes(),data)
+                finally:
+                    process.terminate();out,err=process.communicate(timeout=5)
+                    self.assertNotIn(b'AddressSanitizer',err);self.assertNotIn(b'runtime error:',err)
+                    self.assertEqual(int(out.split(b'RECEIVED ')[-1].splitlines()[0]),2*len(data))
 
     def test_interrupted_and_full_transfer(self):
         import subprocess,time,os

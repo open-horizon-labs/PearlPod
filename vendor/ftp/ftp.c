@@ -73,7 +73,7 @@
 int ftp_buff_size = CONFIG_MICROPY_FTPSERVER_BUFFER_SIZE;
 int ftp_timeout = FTP_CMD_TIMEOUT_MS;
 const char *FTP_TAG = "[Ftp]";
-const char *MOUNT_POINT = "/sdcard/music/.pearl";
+const char *MOUNT_POINT = "/sdcard/music";
 
 static uint8_t ftp_stop = 0;
 
@@ -84,13 +84,16 @@ static ftp_data_t ftp_data = {0};
 #include <stdatomic.h>
 #include "async_writer.h"
 static pearl_writer *writer;
+static bool discard_file;
 static bool async_file;
 static char last_writer_trace[256];
 #ifdef PEARL_FTP_HOST
 #include <time.h>
+extern bool pearl_trace_ram_sink(void);
 static uint64_t trace_clock(void) { struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000000+t.tv_nsec/1000; }
 #else
 #include "esp_timer.h"
+#include "tracer.h"
 static uint64_t trace_clock(void) { return esp_timer_get_time(); }
 #endif
 static atomic_int trace_state,trace_substate;
@@ -139,6 +142,8 @@ static void stoupper (char *str) {
 
 //--------------------------------------------------------------
 static bool ftp_open_file (const char *path, const char *mode) {
+    discard_file=pearl_trace_ram_sink()&&mode[0]=='w'&&!strcmp(path,"/.pearl/.bench-ram");
+    if(discard_file){ftp_data.fp=NULL;async_file=false;file_failed=false;ftp_data.e_open=E_FTP_FILE_OPEN;return true;}
 	ESP_LOGI(FTP_TAG, "ftp_open_file: path=[%s]", path);
 	char fullname[256];
 	if(snprintf(fullname,sizeof(fullname),"%s%s",MOUNT_POINT,path)>=(int)sizeof(fullname))return E_FTP_RESULT_FAILED;
@@ -209,7 +214,7 @@ static ftp_result_t ftp_read_file (char *filebuf, uint32_t desiredsize, uint32_t
 //-----------------------------------------------------------------
 static ftp_result_t ftp_write_file(char *filebuf,uint32_t size){
  uint64_t before=trace_clock();
- bool queued=pearl_writer_append(writer,filebuf,size);
+ bool queued=discard_file||pearl_writer_append(writer,filebuf,size);
  unsigned duration=trace_clock()-before;
  atomic_fetch_add(&write_calls,1);atomic_fetch_add(&write_us,duration);trace_max(&write_max_us,duration);
  if(queued){atomic_fetch_add(&received_bytes,size);return E_FTP_RESULT_OK;}
@@ -585,10 +590,10 @@ static void ftp_fix_path(char *pwd) {
  */
 //-------------------------------------------------
 static void ftp_open_child(char *pwd, char *dir) {
-    char joined[128];
+    char joined[256];
     int n=snprintf(joined,sizeof(joined),"%s%s%s",dir[0]=='/'?"":pwd,
-                   dir[0]=='/'||pwd[strlen(pwd)-1]=='/'?"":"/",dir);
-    if(n<0||n>=96||strstr(joined,"..")){strcpy(pwd,"/invalid");return;}
+                   dir[0]=='/'||!pwd[0]||pwd[strlen(pwd)-1]=='/'?"":"/",dir);
+    if(n<0||n>=220||(strstr(joined,"/../")||!strcmp(joined,"/.."))){strcpy(pwd,"/invalid");return;}
     strcpy(pwd,joined);
 }
 
@@ -633,6 +638,7 @@ static void remove_fname_from_path (char *pwd, char *fname) {
 	if (xpwd == NULL) return;
 
 	xpwd[0] = '\0';
+    if(!pwd[0])strcpy(pwd,"/");
 
 #if 0
 	ftp_fix_path(pwd);
@@ -729,7 +735,7 @@ static void ftp_process_cmd (void) {
 		else {
 			ESP_LOGI(FTP_TAG, "CMD: %d", cmd);
 		}
-        if (strlen(bufptr)>90 || strstr(bufptr,"..") || strchr(bufptr,'\\')) {
+        if (strlen(bufptr)>220 || (strstr(bufptr,"/../")||!strncmp(bufptr,"../",3)||!strcmp(bufptr,"..")) || strchr(bufptr,'\\')) {
             ftp_send_reply(550,"Invalid managed path");return;
         }
 		char fullname[256];
@@ -788,7 +794,7 @@ static void ftp_process_cmd (void) {
 		case E_FTP_CMD_PWD:
 		case E_FTP_CMD_XPWD:
 			{
-				char lpath[128];
+				char lpath[256];
 #if 0
 				if (strstr(ftp_path, VFS_NATIVE_MOUNT_POINT) == ftp_path) {
 					sprintf(lpath, "%s%s", VFS_NATIVE_INTERNAL_MP, ftp_path+strlen(VFS_NATIVE_MOUNT_POINT));
@@ -1199,8 +1205,8 @@ int ftp_run (uint32_t elapsed)
 			break;
 		case E_FTP_STE_CONTINUE_FILE_RX:
 			{
-                if(pearl_writer_failed(writer)){ftp_close_files_dir();ftp_send_reply(552,NULL);ftp_data.state=E_FTP_STE_END_TRANSFER;break;}
-                if(pearl_writer_space(writer)<(unsigned)ftp_buff_size){pearl_writer_backpressure(writer);break;} /* Backpressure: leave bytes in TCP. */
+                if(!discard_file&&pearl_writer_failed(writer)){ftp_close_files_dir();ftp_send_reply(552,NULL);ftp_data.state=E_FTP_STE_END_TRANSFER;break;}
+                if(!discard_file&&pearl_writer_space(writer)<(unsigned)ftp_buff_size){pearl_writer_backpressure(writer);break;} /* Backpressure: leave bytes in TCP. */
 				int32_t len;
 				ftp_result_t result = E_FTP_RESULT_OK;
 

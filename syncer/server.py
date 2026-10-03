@@ -46,7 +46,7 @@ def main():
             state.update(status='uploaded',catalog=sha)
         except Exception as e:
             state.update(status='error',error=type(e).__name__)
-            try:report_failure(address,port,'card_full' if isinstance(e,CapacityError) else 'transfer_failed')
+            try:report_failure(address,port,'card_full' if isinstance(e,CapacityError) else 'transfer_failed',normal=head.get('format')==2)
             except Exception:pass
         finally:gate.release()
     class Handler(BaseHTTPRequestHandler):

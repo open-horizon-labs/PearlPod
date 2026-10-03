@@ -1,5 +1,7 @@
 #include "sync.h"
+#include "tracer.h"
 #include "esp_http_client.h"
+#include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
@@ -18,6 +20,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 static atomic_bool busy, cancel;
+static char probe_url[161];
 
 static atomic_int stage;
 
@@ -114,7 +117,8 @@ static void task(void *arg) {
   char url[200] = {0};
   nvs_handle_t h;
 
-  if (nvs_open("pearl_sync", NVS_READONLY, &h) == ESP_OK) {
+  if(probe_url[0])snprintf(url,sizeof(url),"%s",probe_url);
+  else if (nvs_open("pearl_sync", NVS_READONLY, &h) == ESP_OK) {
     size_t n = sizeof(url);
     nvs_get_str(h, "source", url, &n);
     nvs_close(h);
@@ -154,7 +158,7 @@ static void task(void *arg) {
   mkdir("/sdcard/music/.pearl/objects", 0755);
   mkdir("/sdcard/music/.pearl/catalogs", 0755);
 
-  pearl_managed_collect();
+  /* Keep staged objects for retry. Collect only after successful activation. */
   unlink("/sdcard/music/.pearl/ready");
   unlink("/sdcard/music/.pearl/ready.tmp");
   unlink("/sdcard/music/.pearl/error.txt");
@@ -214,8 +218,9 @@ static void task(void *arg) {
   int64_t last = start, last_data=start;
   unsigned prior_bytes=0;
   int64_t last_yield=start, next_marker_check=start;
+  int64_t limit=probe_url[0]?300000000LL:7200000000LL;
 
-  while (!atomic_load(&cancel) && esp_timer_get_time() - start < 7200000000LL &&
+  while (!atomic_load(&cancel) && esp_timer_get_time() - start < limit &&
          connected()) {
     int64_t now = esp_timer_get_time();
 
@@ -232,7 +237,7 @@ static void task(void *arg) {
     if(now-last_data>=180000000LL) { failure=15;break; }
     elapsed=(now-session_start)/1000000;
 
-    bool check_markers=now>=next_marker_check && ftp_getstate()==E_FTP_STE_READY;
+    bool check_markers=!probe_url[0] && now>=next_marker_check && ftp_getstate()==E_FTP_STE_READY;
     if(check_markers)next_marker_check=now+1000000;
     int64_t marker_start=esp_timer_get_time();
     FILE *failed = check_markers
@@ -257,12 +262,14 @@ static void task(void *arg) {
       pearl_ftp_close();
       ftp = false;
       stage = 4;
+      pearl_network_off(); /* Upload is complete; release radio RAM before parsing. */
 
       if (read && pearl_audio_state().paused && pearl_managed_activate(sha)) {
         success = true;
         pearl_managed_collect();
         pearl_library_rescan();
       }
+      ESP_LOGW("sync","Activation complete success=%d stack_remaining=%u",success,(unsigned)uxTaskGetStackHighWaterMark(NULL));
       break;
     }
     /* Drain ready data without a sleep after every chunk. Yield on idle,
@@ -274,7 +281,7 @@ static void task(void *arg) {
     }
   }
   if (!success && !card_full && !connected()) failure=14;
-  else if (!success && esp_timer_get_time()-start>=7200000000LL) failure=15;
+  else if (!success && esp_timer_get_time()-start>=limit) failure=15;
 done:
   if (ftp)
     pearl_ftp_close();
@@ -284,33 +291,36 @@ done:
 
   pearl_network_off();
   stage = success ? 5 : cancel ? 13 : card_full ? 8 : failure;
+  pearl_trace_probe(false);probe_url[0]=0;
   busy = false;
   vTaskDelete(NULL);
 }
-void pearl_sync_start(void) {
-  if (atomic_load(&busy)) return;
-  if (!pearl_audio_state().paused) {
-    stage = 7;
-    return;
-  }
-  if (atomic_exchange(&busy, true))
-    return;
-  cancel = false;
+static bool start_sync(const char *override) {
+  if (atomic_load(&busy)||pearl_trace_sd_busy()) return false;
+  if (!pearl_audio_state().paused) {stage=7;return false;}
+  if (atomic_exchange(&busy,true))return false;
+  snprintf(probe_url,sizeof(probe_url),"%s",override?override:"");
+  pearl_trace_probe(override!=NULL);
+  cancel=false;
   elapsed=quiet=transferred=0;
   tx_before=tx_after=-1;tx_result=ps_result=0;
   loop_us=loop_max_us=loop_calls=yield_us=connect_us=discovery_us=trigger_us=marker_us=network_us=0;
-  pearl_ftp_reset_progress();
-  stage=1;
-
-  if (xTaskCreate(task, "sync", 8192, NULL, 2, NULL) != pdPASS) {
-    busy = false;
-    stage = 6;
+  pearl_ftp_reset_progress();stage=1;
+  if (xTaskCreate(task,"sync",12288,NULL,2,NULL)!=pdPASS){
+    pearl_trace_probe(false);probe_url[0]=0;busy=false;stage=6;return false;
   }
+  return true;
 }
+void pearl_sync_start(void){start_sync(NULL);}
 
 bool pearl_sync_shutdown(void) {
   cancel = true;
   for (unsigned i = 0; i < 250 && busy; i++)
     vTaskDelay(pdMS_TO_TICKS(20));
   return !busy;
+}
+
+bool pearl_sync_probe_start(const char *url){
+ if(strncmp(url,"http://",7)||strlen(url)>160||strchr(url,'\n')||strchr(url,'\r')||strchr(url,'@'))return false;
+ return start_sync(url);
 }

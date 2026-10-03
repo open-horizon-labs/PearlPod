@@ -11,7 +11,22 @@ try:
     head=json.loads((cache/'head.json').read_text());data=(cache/'catalogs'/head['catalog']).read_bytes()
     for line in data.splitlines():
         record=json.loads(line)
-        if 'file' in record:os.link(cache/'objects'/record['file'],dest/'objects'/record['file'])
+        if 'file' in record:
+            target=(root/'music'/record['file']) if head.get('format')==2 else dest/'objects'/record['file']
+            target.parent.mkdir(parents=True,exist_ok=True)
+            os.link(cache/'objects'/record.get('cache_source',record['file']),target)
+    if head.get('format')==2:
+        for old in (cache/'catalogs').iterdir():
+            if old.suffix:continue
+            old_rows=[json.loads(line) for line in old.read_bytes().splitlines()]
+            if not old_rows or old_rows[0].get('format')!=1 or not any('track' in row for row in old_rows):continue
+            (dest/'catalogs'/old.name).write_bytes(old.read_bytes())
+            for row in old_rows:
+                if 'file' in row:os.link(cache/'objects'/row['file'],dest/'objects'/row['file'])
+            legacy=next(row['file'] for row in old_rows if row.get('file','').endswith('.mp3'))
+            (dest/'catalogs'/head['catalog']).write_bytes(data)
+            subprocess.run(['/tmp/pearl-managed-check',old.name,head['catalog'],str(dest/'objects'/legacy)],check=True)
+            break
     extra=b'previous-only asset';extra_name=hashlib.sha256(extra).hexdigest()+'.txt'
     protected=dest/'objects'/extra_name;protected.write_bytes(extra)
     orphan=dest/'objects'/(hashlib.sha256(b'orphan').hexdigest()+'.txt');orphan.write_bytes(b'orphan')

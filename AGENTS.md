@@ -15,3 +15,5 @@ Recovery: `tools/recover.sh` polls for this player’s USB identity and makes up
 Home use: the setup AP is open. Setup, diagnostics, FTP and sync require no passwords, bearer/session tokens, login or pairing. Do not introduce device/service authentication unless the user requests it. The household router’s WiFi password and host-only Plex credential are upstream requirements, not PearlPod access controls.
 
 WiFi setup must retain the T-Dongle/roon-knob captive portal flow: DHCP DNS advertisement, captive DNS, phone probe handlers and deferred scanning. A manual URL is a fallback, not the primary setup flow.
+
+Music file naming: ordinary microSD layout is mandatory. Use readable Artist/Album/NN - Title.mp3 paths, adjacent cover/lyric files and relative Playlists/Name.m3u8. Never use hash filenames for user-visible card media. Host preparation caches may remain content-addressed. Device bookkeeping stays hidden in music/.pearl. Normal sync activation checks structure/length/write outcomes without rehashing media.

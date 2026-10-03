@@ -29,12 +29,21 @@ static bool hashname(const char *s) {
   return true;
 }
 static bool object(const char *s) {
-  if (!hashname(s) || strlen(s) > 70)
-    return false;
-  const char *ext = s + 64;
-  return !strcmp(ext, ".mp3") || !strcmp(ext, ".jpg") || !strcmp(ext, ".lrc") ||
-         !strcmp(ext, ".txt") || !strcmp(ext, ".srt") || !strcmp(ext, ".vtt") ||
-         !strcmp(ext, ".m3u8");
+  if(!s||strlen(s)>=220||s[0]=='/'||strchr(s,'\\'))return false;
+  const char *ext=strrchr(s,'.');
+  if(!ext||(!strchr(s,'/')&&!hashname(s)))return false;
+  if(strcmp(ext,".mp3")&&strcmp(ext,".jpg")&&strcmp(ext,".lrc")&&strcmp(ext,".txt")&&strcmp(ext,".srt")&&strcmp(ext,".vtt")&&strcmp(ext,".m3u8"))return false;
+  bool start=true;
+  for(const unsigned char *p=(const unsigned char*)s;*p;p++){
+    if(*p<32||(start&&*p=='.'))return false;
+    if(*p=='/'&&start)return false;
+    start=*p=='/';
+  }
+  return !start;
+}
+static void media_path(char *out,const char *name){
+  if(strchr(name,'/'))snprintf(out,PEARL_PATH,"%.*s/%s",(int)strlen(ROOT)-7,ROOT,name);
+  else snprintf(out,PEARL_PATH,ROOT "/objects/%s",name);
 }
 static const char *string(cJSON *row, const char *key) {
   cJSON *v = cJSON_GetObjectItemCaseSensitive(row, key);
@@ -88,9 +97,8 @@ static bool read_activation(activation *record) {
   return e == ESP_OK && n == sizeof(*record) && record->active[64] == 0 &&
          record->previous[64] == 0;
 }
-/* Validate everything before changing NVS. Full hashing runs only during sync.
- */
-static bool catalog(const char *sha, bool full, pearl_library *l,
+/* Validate catalog, sizes and references before changing NVS. Music is not reread. */
+static bool catalog(const char *sha, pearl_library *l,
                     pearl_add_track_fn add) {
   if (!hashname(sha) || strlen(sha) != 64)
     return false;
@@ -161,28 +169,21 @@ static bool catalog(const char *sha, bool full, pearl_library *l,
 
     cJSON *format = cJSON_GetObjectItem(row, "format");
     if (format) {
-      ok = cJSON_IsNumber(format) && format->valuedouble == 1;
+      ok = cJSON_IsNumber(format) && (format->valuedouble == 1 || format->valuedouble == 2);
     } else if (name) {
       cJSON *size = cJSON_GetObjectItem(row, "bytes");
-      snprintf(path, sizeof(path), ROOT "/objects/%s",
-               object(name) ? name : "invalid");
+      media_path(path,object(name)?name:"invalid");
 
       ok = object(name) && cJSON_IsNumber(size) && size->valuedouble >= 0 &&
            size->valuedouble <= 1024 * 1024 * 1024 &&
            size->valuedouble == (double)(size_t)size->valuedouble &&
            !stat(path, &st) && st.st_size == (off_t)size->valuedouble;
 
-      if (ok && full && !checksum(path, name)) {
-        unlink(path);
-        ok = false;
-      }
     } else if (track) {
-      ok = object(track) && !strcmp(track + 64, ".mp3");
+      ok = object(track) && !strcmp(strrchr(track,'.'), ".mp3");
       if (ok) {
-        snprintf(path, sizeof(path), ROOT "/objects/%s", track);
+        media_path(path,track);
         ok = !stat(path, &st) && st.st_size > 0;
-        if (ok && full)
-          ok = checksum(path, track);
       }
 
       const char *album = string(row, "album_id");
@@ -200,16 +201,15 @@ static bool catalog(const char *sha, bool full, pearl_library *l,
         if (!object(lyrics))
           ok = false;
         if (ok && lyrics) {
-          snprintf(path, sizeof(path), ROOT "/objects/%s", lyrics);
+          media_path(path,lyrics);
           ok = !stat(path, &st) && st.st_size > 0 && st.st_size <= 256 * 1024;
-          if (ok && full)
-            ok = checksum(path, lyrics);
         }
       }
       if (ok && l) {
-        snprintf(path, sizeof(path), ROOT "/objects/%s", track);
+        media_path(path,track);
         char dir[PEARL_PATH];
-        snprintf(dir, sizeof(dir), ROOT "/album_%s", album);
+        if(strchr(track,'/')){snprintf(dir,sizeof(dir),"%s",path);char *slash=strrchr(dir,'/');if(slash)*slash=0;}
+        else snprintf(dir, sizeof(dir), ROOT "/album_%s", album);
 
         unsigned before = l->track_count;
         add(l, path, dir, track);
@@ -217,7 +217,7 @@ static bool catalog(const char *sha, bool full, pearl_library *l,
         if (l->track_count == before + 1 && lyrics) {
           pearl_track *t = &l->tracks[before];
           free(t->lyrics);
-          snprintf(path, sizeof(path), ROOT "/objects/%s", lyrics);
+          media_path(path,lyrics);
 #ifdef ESP_PLATFORM
           t->lyrics = heap_caps_malloc(strlen(path) + 1,
                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -233,17 +233,15 @@ static bool catalog(const char *sha, bool full, pearl_library *l,
       }
     } else if (playlist) {
       const char *title = string(row, "title");
-      ok = object(playlist) && !strcmp(playlist + 64, ".m3u8") && title &&
+      ok = object(playlist) && !strcmp(strrchr(playlist,'.'), ".m3u8") && title &&
            strlen(title) < PEARL_NAME;
 
       if (ok) {
-        snprintf(path, sizeof(path), ROOT "/objects/%s", playlist);
+        media_path(path,playlist);
         ok = !stat(path, &st) && st.st_size > 0;
-        if (ok && full)
-          ok = checksum(path, playlist);
       }
       if (ok && l) {
-        snprintf(path, sizeof(path), ROOT "/objects/%s", playlist);
+        media_path(path,playlist);
         pearl_collection_add(l, PEARL_PLAYLISTS, title, path);
       }
     } else
@@ -258,15 +256,25 @@ static bool catalog(const char *sha, bool full, pearl_library *l,
   fclose(f);
   return ok;
 }
+static int catalog_format(const char *sha){
+  if(!sha||!sha[0])return 0;
+  char path[PEARL_PATH],line[128];snprintf(path,sizeof(path),ROOT "/catalogs/%s",sha);
+  FILE *f=fopen(path,"rb");if(!f)return 0;
+  bool read=fgets(line,sizeof(line),f)!=NULL;fclose(f);if(!read)return 0;
+  cJSON *row=cJSON_Parse(line);if(!row)return 0;
+  cJSON *format=cJSON_GetObjectItem(row,"format");int result=cJSON_IsNumber(format)?format->valueint:0;cJSON_Delete(row);return result;
+}
 bool pearl_managed_activate(const char *sha) {
   activation record = {0};
   read_activation(&record);
   if (sha && !strcmp(record.active, sha))
-    return catalog(sha, false, NULL, NULL);
-  if (!catalog(sha, true, NULL, NULL) || !pearl_library_validate_sync(sha))
+    return catalog(sha, NULL, NULL);
+  if (!catalog(sha, NULL, NULL) || !pearl_library_validate_sync(sha))
     return false;
 
-  snprintf(record.previous, sizeof(record.previous), "%s", record.active);
+  /* Once readable media is validated, retire the former opaque store. */
+  if(catalog_format(sha)==2 && catalog_format(record.active)==1)record.previous[0]=0;
+  else snprintf(record.previous, sizeof(record.previous), "%s", record.active);
   snprintf(record.active, sizeof(record.active), "%s", sha);
 
   nvs_handle_t h;
@@ -290,16 +298,16 @@ bool pearl_managed_load(pearl_library *l, const char *root,
     return true;
 
   const char *selected =
-      catalog(record.active, false, NULL, NULL)     ? record.active
-      : catalog(record.previous, false, NULL, NULL) ? record.previous
+      catalog(record.active, NULL, NULL)     ? record.active
+      : catalog(record.previous, NULL, NULL) ? record.previous
                                                     : NULL;
 
-  return !selected || catalog(selected, false, l, add);
+  return !selected || catalog(selected, l, add);
 }
 
 bool pearl_managed_candidate(pearl_library *l, const char *sha,
                              pearl_add_track_fn add) {
-  return catalog(sha, false, l, add);
+  return catalog(sha, l, add);
 }
 
 /* Bloom membership is deliberately conservative: collisions keep extra files,
@@ -321,7 +329,7 @@ static bool keep_name(unsigned char *keep, const char *name, bool mark) {
 }
 static void keep_values(unsigned char *keep, cJSON *value) {
   for (; value; value = value->next) {
-    if (cJSON_IsString(value) && object(value->valuestring))
+    if ((!value->string || strcmp(value->string,"cache_source")) && cJSON_IsString(value) && hashname(value->valuestring) && object(value->valuestring))
       keep_name(keep, value->valuestring, true);
     if (value->child) keep_values(keep, value->child);
   }
@@ -329,7 +337,7 @@ static void keep_values(unsigned char *keep, cJSON *value) {
 static bool keep_catalog(unsigned char *keep, const char *sha) {
   if (!sha[0]) return true;
   /* Refuse cleanup if either retained catalog is damaged or incomplete. */
-  if (!catalog(sha, false, NULL, NULL)) return false;
+  if (!catalog(sha, NULL, NULL)) return false;
   char path[PEARL_PATH];
   snprintf(path, sizeof(path), ROOT "/catalogs/%s", sha);
   FILE *f = fopen(path, "rb");

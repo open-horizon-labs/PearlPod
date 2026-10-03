@@ -17,5 +17,6 @@ bool pearl_sync_busy(void);
 bool pearl_sync_shutdown(void);
 void pearl_sync_cancel(void);
 void pearl_sync_trace(char *out,unsigned size);
+bool pearl_sync_probe_start(const char *url);
 bool pearl_sync_source(const char *url);
 #endif

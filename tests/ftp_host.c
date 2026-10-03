@@ -6,6 +6,7 @@ extern const char *MOUNT_POINT;
 extern void pearl_ftp_close(void);
 extern unsigned pearl_ftp_received_bytes(void);
 extern void pearl_ftp_reset_progress(void);
+bool pearl_trace_ram_sink(void){return getenv("PEARL_FTP_RAM_PROBE")!=NULL;}
 static volatile sig_atomic_t stop;
 static void stopping(int signal) {
   (void)signal;
