@@ -57,7 +57,7 @@ Both inputs yield a profile-specific published selection: distinct logical track
 
 The NAS owns all file mapping, format work and image processing. A proposed compatible output profile is: preserve supported MP3/FLAC compressed audio where appropriate; convert WAV, unsupported audio and unnecessarily large high-resolution material on the NAS to 16-bit/48 kHz FLAC. The current player outputs a 16-bit-derived, 48 kHz signal, so native high-resolution delivery is not a current benefit. A compact MP3 profile can be selected if card capacity or measured transfer time demands it; that quality trade-off is explicit.
 
-Metadata and artwork are separate from audio in the managed catalog. Playlist title/order/cover edits never force audio to change. Roon retags exported copies, which can change a whole-file hash even if the sound is unchanged. Avoid claiming those bytes are a new song: normalize non-audio tags in a deterministic stream-copy preparation step and carry the new metadata in the catalog. Cache the resulting object. Verify repeated exports/retag-only edits against the output profile; if normalization is not deterministic, byte-level deduplication remains correct but loses efficiency. A profile/toolchain change may legitimately produce new assets. Already-lossy MP3 should not be re-encoded simply to change tags.
+Metadata and artwork are separate from audio in the managed catalog. Playlist title/order/cover edits never force audio to change. Roon retags exported copies, which can change a whole-file hash even if the sound is unchanged. Avoid claiming those bytes are a new song: normalize non-audio tags in a deterministic stream-copy preparation step and carry the new metadata in the catalog. Cache the resulting object. Verify repeated exports/retag-only edits against the output profile; if normalization is not deterministic, byte-level deduplication remains correct but loses efficiency. A profile/toolchain change may legitimately produce new assets. Already-lossy MP3 should not be re-encoded simply to change tags. FFmpeg documents stream-copy and metadata mapping separately; this supports the proposed preparation mechanism without implying that every container/profile is deterministic. [FFmpeg stream-copy and metadata documentation](https://ffmpeg.org/ffmpeg.html#Streamcopy).
 
 Source files are never modified. The NAS cache index uses source identity, file stat information and preparation-profile version to avoid unnecessary work, but a changed file is hashed/validated before cache reuse. Timestamps alone are not content identity; mutation during preparation invalidates that candidate. Exact duplicate delivered bytes across sources may share one object; no promise is made to merge two different encodings of the same performance.
 
@@ -165,3 +165,14 @@ No Problem Weave/S&T lineage exists for this scope, so no artificial step IDs ar
 4. Fault-inject storage and measure startup, peak heap/stack and playback contention. Manual sync is the first delivered flow; nightly wake follows the charger evidence gate.
 
 This exploration updates the proposal and evidence requirements. No publisher, account, scheduled job or firmware was deployed or flashed in this turn.
+
+## Bounded host evidence from this exploration
+
+A local synthetic two-second 44.1 kHz stereo fixture was created separately in FLAC and MP3. For each format, two copies received different title tags through stream-copy. Both were normalized with the command below. The pair converged to identical output bytes for each format, and decoded signed-16-bit PCM matched the original fixture exactly. Resulting objects were 33,183 bytes (FLAC) and 33,061 bytes (MP3). This verifies the proposed tag-normalization mechanism on those fixtures; it does not verify real Roon exports, every encoder/tag type, household access or network/storage recovery.
+
+```sh
+ffmpeg -i tagged.flac -map 0:a:0 -c:a copy -map_metadata -1 -map_chapters -1 delivery.flac
+# The same options were exercised with .mp3 input/output.
+```
+
+Runtime: `ffmpeg version 7.0 Copyright (c) 2000-2024 the FFmpeg developers`. Fixture files were generated in a temporary directory; no NAS or device files were touched. Transfer arithmetic was also checked independently: repeated/shared entries retained in a 106-entry fixture refer to 103 distinct tracks; compared with 100 existing objects, only three new 8 MiB objects (24 MiB) are needed. These are bounded host checks, not a throughput benchmark or a functioning end-to-end sync implementation.
