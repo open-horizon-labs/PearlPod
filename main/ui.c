@@ -1,5 +1,6 @@
 #include "player.h"
 #include "network.h"
+#include "power.h"
 #include "lvgl.h"
 #include "artwork.h"
 #ifdef PEARL_UI_HOST
@@ -19,6 +20,7 @@ extern const lv_img_dsc_t pearl_welcome;
 #define THUMB_SIZE 64
 static const uint32_t bg=0x101827,cream=0xfff6dc,yellow=0xffd75e,teal=0x56ddc5,surface=0x1d2c40;
 static pearl_library *lib;
+static bool power_asleep;
 static lv_obj_t *body,*heading,*status,*transport,*title,*album_label,*art,*time_label,*play_label,*volume_label,*nav,*back,*page_prev,*page_next,*hint;
 static lv_obj_t *thumbs[ALBUM_PAGE],*track_rows[TRACK_PAGE];
 static lv_img_dsc_t thumb_desc[ALBUM_PAGE],art_desc;
@@ -112,7 +114,7 @@ static void render(void){
     unsigned count=0;bool has_pages=false;
     if(page==-4){lv_label_set_text(heading,"Your library");lv_label_set_text(hint,"Choose how to explore");for(int i=0;i<4;i++)button(body,view_names[i],0,i*60,424,52,choose_view,(void *)(intptr_t)i);button(body,"Rescan card",0,240,424,60,rescan,NULL);button(body,"WiFi",0,312,424,60,wifi_open,NULL);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);return;
     }else if(page==-5){
-        lv_label_set_text(heading,"WiFi");lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_label_set_text(hint,"Setup is for a grown-up. Music stays offline.");network_info=label(body,"WiFi is off",0,0,424,&lv_font_montserrat_20);lv_obj_set_height(network_info,88);lv_label_set_long_mode(network_info,LV_LABEL_LONG_WRAP);network_buttons[0]=button(body,"Set up WiFi",0,100,424,60,wifi_setup,NULL);network_buttons[1]=button(body,"Connect saved network",0,172,424,60,wifi_connect,NULL);network_buttons[2]=button(body,"Turn WiFi off",0,244,424,60,wifi_off,NULL);return;
+        lv_label_set_text(heading,"WiFi");lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_label_set_text(hint,"Setup is for a grown-up. Music stays offline.");network_info=label(body,"WiFi is off",0,0,424,&lv_font_montserrat_20);lv_obj_set_height(network_info,88);lv_label_set_long_mode(network_info,LV_LABEL_LONG_WRAP);network_buttons[0]=button(body,"Set up WiFi",0,100,424,60,wifi_setup,NULL);network_buttons[1]=button(body,"Connect for diagnostics",0,172,424,60,wifi_connect,NULL);network_buttons[2]=button(body,"Turn WiFi off",0,244,424,60,wifi_off,NULL);return;
     }else if(page==-1){
         lv_label_set_text(heading,view_names[view]);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_obj_set_width(heading,194);lv_label_set_text(hint,browse_count>3?"Swipe up to explore":"Choose your next adventure");
         if(!lib||!browse_count){label(body,view==PEARL_PLAYLISTS?"Your playlists go here.":"Your music goes here.",0,25,420,&lv_font_montserrat_24);lv_obj_t *help=label(body,view==PEARL_PLAYLISTS?"Add M3U, M3U8 or XSPF files to the music folder, then rescan.":"Add albums to the card's music folder, then rescan.",0,80,420,&lv_font_montserrat_20);lv_obj_set_height(help,100);lv_label_set_long_mode(help,LV_LABEL_LONG_WRAP);return;}
@@ -138,6 +140,7 @@ static void render(void){
     lv_obj_set_style_bg_color(lv_obj_get_child(nav,0),lv_color_hex(page==-1?teal:yellow),0);
 }
 static void tick(lv_timer_t *timer){
+    if(power_asleep){art_result r;while(xQueueReceive(art_results,&r,0)==pdTRUE)free(r.pixels);return;}
     if(network_info){pearl_network_state n=pearl_network_snapshot();char info[400];if(n.setup)snprintf(info,sizeof(info),"%s\n\nNetwork: %s\nPassword: %s\nOpen http://192.168.4.1\n%s",n.message,n.ap_ssid,n.ap_password,n.scanning?"Finding networks...":"");else snprintf(info,sizeof(info),"%s%s%s",n.message,n.connected?"\nIP: ":"",n.connected?n.ip:"");lv_label_set_text(network_info,info);int height=n.setup?220:88;lv_obj_set_height(network_info,height);for(int i=0;i<3;i++)lv_obj_set_y(network_buttons[i],height+12+i*72);}
     if(!lib)return;
     pearl_state s=pearl_audio_state();char text[160];snprintf(text,sizeof(text),"Vol %d",s.volume);lv_label_set_text(volume_label,text);
@@ -173,3 +176,5 @@ void pearl_ui_start(void){
 void pearl_ui_ready(pearl_library *l,const char *err){free(track_offsets);free(track_scroll);free(album_scroll);free(browse_ids);lib=l;track_offsets=calloc(l->collection_count+1,sizeof(*track_offsets));track_scroll=calloc(l->collection_count+1,sizeof(*track_scroll));album_scroll=calloc(l->collection_count/ALBUM_PAGE+1,sizeof(*album_scroll));browse_ids=calloc(l->collection_count+1,sizeof(*browse_ids));if(!track_offsets||!track_scroll||!album_scroll||!browse_ids){page=-2;lib=NULL;reset_body();lv_obj_add_flag(nav,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_next,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(heading,"Library too large");lv_label_set_text(status,"Reduce the card library, then restart.");return;}rebuild_browse();snprintf(startup_error,sizeof(startup_error),"%s",err?err:"");if(!startup_error[0]&&l->skipped)snprintf(startup_error,sizeof(startup_error),"Skipped %u entries; check paths/playlists.",l->skipped);page=-1;render();}
 
 void pearl_ui_scanning(void){save_place();page=-2;reset_body();lv_label_set_text(lv_obj_get_child(back,0),page==-1?LV_SYMBOL_LIST:LV_SYMBOL_LEFT);lv_obj_add_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(heading,"Scanning card...");lv_label_set_text(hint,"Your music will be ready soon.");lv_label_set_text(status,"");lv_obj_add_flag(nav,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_next,LV_OBJ_FLAG_HIDDEN);lib=NULL;}
+
+void pearl_ui_power(bool asleep){power_asleep=asleep;if(asleep){save_place();reset_body();}else if(lib)render();}

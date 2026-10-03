@@ -16,6 +16,10 @@
 #include "lvgl.h"
 #include "player.h"
 #include "network.h"
+#include "power.h"
+#include "power_policy.h"
+#include "driver/usb_serial_jtag.h"
+#include "driver/rtc_io.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/sdmmc_host.h"
@@ -32,11 +36,20 @@ static esp_lcd_panel_handle_t player_panel;
 static pearl_library music;
 static TaskHandle_t rescan_task_handle;
 static atomic_bool rescan_running;
-static bool audio_started;
+static atomic_bool audio_started,library_ready;
 static SemaphoreHandle_t library_access;
 bool pearl_library_lock(void){return library_access&&xSemaphoreTake(library_access,pdMS_TO_TICKS(5000))==pdTRUE;}
 void pearl_library_unlock(void){xSemaphoreGive(library_access);}
-static volatile bool screen_locked;
+static atomic_bool screen_locked,screen_manual,wake_requested;
+static atomic_uint activity_ms,library_albums,library_tracks;
+void pearl_power_activity(void){atomic_store(&activity_ms,(uint32_t)(esp_timer_get_time()/1000));}
+uint32_t pearl_power_last_activity(void){return atomic_load(&activity_ms);}
+bool pearl_power_screen_asleep(void){return atomic_load(&screen_locked);}
+bool pearl_power_deep_supported(void){return esp_sleep_is_valid_wakeup_gpio(CONFIG_PEARL_BUTTON_UP);}
+void pearl_library_counts(unsigned *albums,unsigned *tracks){*albums=atomic_load(&library_albums);*tracks=atomic_load(&library_tracks);}
+static void display_sleep(bool asleep,bool manual);
+static void enter_standby(void);
+
 
 
 /*
@@ -154,7 +167,7 @@ HIFI版本所有IO
 #define CST820_ID   2
 #define CHSC6417_ID 3
 
-#define EXAMPLE_LVGL_BUF_HEIGHT        (EXAMPLE_LCD_V_RES / 10)
+#define EXAMPLE_LVGL_BUF_HEIGHT        24 /* Two 22 KiB DMA buffers; leave internal RAM for audio/WiFi. */
 #define EXAMPLE_LVGL_TICK_PERIOD_MS    2
 #define EXAMPLE_LVGL_TASK_MAX_DELAY_MS 500
 #define EXAMPLE_LVGL_TASK_MIN_DELAY_MS 1
@@ -346,6 +359,7 @@ static bool example_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io, 
 
 static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
 {
+    if(atomic_load(&screen_locked)){lv_disp_flush_ready(drv);return;}
     esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t) drv->user_data;
     const int offsetx1 = area->x1;
     const int offsetx2 = area->x2;
@@ -395,7 +409,8 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
 {
     esp_lcd_touch_handle_t tp = (esp_lcd_touch_handle_t)drv->user_data;
     assert(tp);
-    if(screen_locked){data->state=LV_INDEV_STATE_RELEASED;return;}
+    if(screen_locked&&screen_manual){data->state=LV_INDEV_STATE_RELEASED;return;}
+    static bool consume_wake_touch;
 
     uint16_t tp_x;
     uint16_t tp_y;
@@ -405,11 +420,15 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
     /* Read data from touch controller */
     bool tp_pressed = esp_lcd_touch_get_coordinates(tp, &tp_x, &tp_y, NULL, &tp_cnt, 1);
     if (tp_pressed && tp_cnt > 0) {
+        pearl_power_activity();
+        if(screen_locked){atomic_store(&wake_requested,true);consume_wake_touch=true;}
+        if(consume_wake_touch){data->state=LV_INDEV_STATE_RELEASED;return;}
         data->point.x = tp_x;
         data->point.y = tp_y;
         data->state = LV_INDEV_STATE_PRESSED;
         
     } else {
+        consume_wake_touch=false;
         data->state = LV_INDEV_STATE_RELEASED;
     }
 
@@ -462,6 +481,13 @@ static void buttons_task(void *arg);
 
 void app_main(void)
 {
+    if(esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0){
+        rtc_gpio_deinit(CONFIG_PEARL_BUTTON_UP);gpio_set_direction(CONFIG_PEARL_BUTTON_UP,GPIO_MODE_INPUT);gpio_pullup_en(CONFIG_PEARL_BUTTON_UP);
+        int64_t pressed=esp_timer_get_time();while(!gpio_get_level(CONFIG_PEARL_BUTTON_UP)&&esp_timer_get_time()-pressed<1800000)vTaskDelay(pdMS_TO_TICKS(20));
+        if(gpio_get_level(CONFIG_PEARL_BUTTON_UP)){esp_sleep_enable_ext0_wakeup(CONFIG_PEARL_BUTTON_UP,0);rtc_gpio_pullup_en(CONFIG_PEARL_BUTTON_UP);rtc_gpio_pulldown_dis(CONFIG_PEARL_BUTTON_UP);esp_deep_sleep_start();}
+    }
+    gpio_deep_sleep_hold_dis();gpio_hold_dis(GPIO_NUM_41);
+    pearl_power_activity();
     library_access=xSemaphoreCreateMutex();
     esp_err_t nvs_err=nvs_flash_init();
     if(nvs_err!=ESP_OK)ESP_LOGW("pearl","Preferences unavailable: %s",esp_err_to_name(nvs_err));
@@ -510,7 +536,7 @@ void app_main(void)
     // 在打开屏幕或背光之前，用户可以将预定义的图案刷新到屏幕上
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
     // 设置屏幕亮度
-    ESP_ERROR_CHECK(panel_qspi_amoled_set_brightness(panel_handle, 0xFF)); // 设置亮度为 15
+    ESP_ERROR_CHECK(panel_qspi_amoled_set_brightness(panel_handle, CONFIG_PEARL_BRIGHTNESS)); // 设置亮度为 15
 
 #if EXAMPLE_USE_TOUCH
     ESP_LOGI(TAG, "Initialize I2C bus");
@@ -637,8 +663,10 @@ static void library_task(void *arg)
     else if(pearl_library_scan(&music,"/sdcard/music"))err="Add a music folder to your card, then restart.";
     else {pearl_audio_start(&music);audio_started=true;}
     if(example_lvgl_lock(-1)){pearl_ui_ready(&music,err);example_lvgl_unlock();}
+    atomic_store(&library_albums,music.album_count);atomic_store(&library_tracks,music.track_count);
     pearl_network_init();
     pearl_console_start(&music);
+    atomic_store(&library_ready,true);
     ESP_LOGW("pearl","Library ready at %lld ms: %u albums, %u tracks; %s",esp_timer_get_time()/1000,music.album_count,music.track_count,err);
     vTaskDelete(NULL);
 }
@@ -647,6 +675,7 @@ static void rescan_task(void *arg){
     if(example_lvgl_lock(-1)){pearl_ui_scanning();example_lvgl_unlock();}
     pearl_library next={0};int result=pearl_library_scan(&next,"/sdcard/music");
     if(!result){if(pearl_library_lock()){pearl_library old=music;music=next;pearl_library_free(&old);pearl_library_unlock();}else{pearl_library_free(&next);result=-3;}}
+    atomic_store(&library_albums,music.album_count);atomic_store(&library_tracks,music.track_count);
     pearl_audio_attach(&music);
     if(example_lvgl_lock(-1)){pearl_ui_ready(&music,result?"Scan failed. Previous library kept; check card or free memory.":"");example_lvgl_unlock();}
     ESP_LOGW("pearl","Rescan result=%d albums=%u tracks=%u",result,music.album_count,music.track_count);
@@ -658,24 +687,45 @@ static void buttons_task(void *arg)
     const int up=CONFIG_PEARL_BUTTON_UP,down=CONFIG_PEARL_BUTTON_DOWN;
     gpio_config_t cfg={.pin_bit_mask=(1ULL<<up)|(1ULL<<down),.mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE};gpio_config(&cfg);
     pearl_button ub={0},db={0};
+    uint32_t paused_since=esp_timer_get_time()/1000;bool was_playing=false;
     // Don't interpret a held boot/power button as a second shutdown request.
     while(!gpio_get_level(up))vTaskDelay(pdMS_TO_TICKS(20));
     while(1){
         uint32_t now=esp_timer_get_time()/1000;
+        if(atomic_exchange(&wake_requested,false)){display_sleep(false,false);pearl_power_activity();}
         pearl_button_event u=pearl_button_update(&ub,!gpio_get_level(up),now),d=pearl_button_update(&db,!gpio_get_level(down),now);
+        if(u!=BUTTON_NONE||d!=BUTTON_NONE){pearl_power_activity();if(screen_locked&&!screen_manual)display_sleep(false,false);}
         if(u==BUTTON_SHORT){pearl_audio_volume(2);ESP_LOGW("pearl","Volume up GPIO%d",up);}
         if(d==BUTTON_SHORT){pearl_audio_volume(-2);ESP_LOGW("pearl","Volume down GPIO%d",down);}
-        if(d==BUTTON_LONG){screen_locked=!screen_locked;esp_lcd_panel_disp_on_off(player_panel,!screen_locked);}
-        if(u==BUTTON_LONG){
-            if(!pearl_network_shutdown()){ESP_LOGW("pearl","WiFi shutdown pending; hold again to sleep.");continue;}
-            pearl_audio_shutdown();screen_locked=true;esp_lcd_panel_disp_on_off(player_panel,false);
-            while(!gpio_get_level(up))vTaskDelay(pdMS_TO_TICKS(20));
-            gpio_wakeup_enable(up,GPIO_INTR_LOW_LEVEL);esp_sleep_enable_gpio_wakeup();
-            // Light sleep supports the non-RTC button GPIO on this board. Wake requires a long hold.
-            for(;;){esp_light_sleep_start();uint32_t start=esp_timer_get_time()/1000;
-                while(!gpio_get_level(up)){if((uint32_t)(esp_timer_get_time()/1000)-start>=1800)esp_restart();vTaskDelay(pdMS_TO_TICKS(20));}
-            }
-        }
+        if(d==BUTTON_LONG){display_sleep(!screen_locked,!screen_locked);}
+        if(u==BUTTON_LONG)enter_standby();
+        pearl_state playback=pearl_audio_state();bool playing=playback.ready&&!playback.paused;
+        if(playing||was_playing){paused_since=now;}
+        was_playing=playing;
+        pearl_power_input policy={.now=now,.last_activity=pearl_power_last_activity(),.paused_since=paused_since,.screen_timeout=CONFIG_PEARL_SCREEN_TIMEOUT_SEC*1000u,.idle_timeout=CONFIG_PEARL_IDLE_SLEEP_SEC*1000u,.playing=playing,.screen_asleep=screen_locked,.network=pearl_network_enabled(),.busy=atomic_load(&rescan_running)||!atomic_load(&library_ready),.usb_connected=usb_serial_jtag_is_connected(),.button_released=gpio_get_level(up)&&gpio_get_level(down),.deep_supported=pearl_power_deep_supported()};
+        pearl_power_action action=pearl_power_decide(&policy);
+        if(action==PEARL_POWER_SCREEN_SLEEP)display_sleep(true,false);
+        if(action==PEARL_POWER_DEEP_SLEEP)enter_standby();
         vTaskDelay(pdMS_TO_TICKS(10));
     }
+}
+
+static void display_sleep(bool asleep,bool manual){
+    if(!player_panel||!example_lvgl_lock(-1))return;
+    if(asleep){screen_locked=true;screen_manual=manual;pearl_ui_power(true);esp_lcd_panel_disp_on_off(player_panel,false);panel_qspi_amoled_sleep(player_panel,true);}
+    else{panel_qspi_amoled_sleep(player_panel,false);vTaskDelay(pdMS_TO_TICKS(120));esp_lcd_panel_disp_on_off(player_panel,true);screen_locked=false;screen_manual=false;pearl_ui_power(false);lv_obj_invalidate(lv_scr_act());}
+    example_lvgl_unlock();
+}
+static void enter_standby(void){
+    if(!pearl_network_shutdown()){ESP_LOGW("pearl","WiFi shutdown pending; hold again to sleep.");pearl_power_activity();return;}
+    const int up=CONFIG_PEARL_BUTTON_UP;
+    if(pearl_power_deep_supported()&&esp_sleep_enable_ext0_wakeup(up,0)!=ESP_OK){ESP_LOGW("pearl","Wake configuration failed; staying awake.");pearl_power_activity();return;}
+    pearl_audio_shutdown();display_sleep(true,true);
+    while(!gpio_get_level(up))vTaskDelay(pdMS_TO_TICKS(20));
+    if(pearl_power_deep_supported()){
+        rtc_gpio_pullup_en(up);rtc_gpio_pulldown_dis(up);gpio_hold_en(GPIO_NUM_41);gpio_deep_sleep_hold_en();
+        ESP_LOGW("pearl","Deep sleep; hold GPIO%d to wake.",up);esp_deep_sleep_start();
+    }
+    gpio_wakeup_enable(up,GPIO_INTR_LOW_LEVEL);esp_sleep_enable_gpio_wakeup();
+    for(;;){esp_light_sleep_start();uint32_t start=esp_timer_get_time()/1000;while(!gpio_get_level(up)){if((uint32_t)(esp_timer_get_time()/1000)-start>=1800)esp_restart();vTaskDelay(pdMS_TO_TICKS(20));}}
 }

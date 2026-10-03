@@ -1,9 +1,13 @@
 #include "network.h"
 #include "cJSON.h"
+#include "driver/usb_serial_jtag.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_netif.h"
 #include "esp_random.h"
+#include "esp_sleep.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -12,6 +16,9 @@
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 #include "nvs.h"
+#include "player.h"
+#include "power.h"
+#include "power_policy.h"
 #include "wifi_policy.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -29,6 +36,13 @@ typedef struct {
   profile value;
 } command;
 static QueueHandle_t commands;
+static TaskHandle_t worker_handle;
+static void worker(void *arg);
+static void stop(void);
+static bool base_ready;
+static unsigned retries;
+static atomic_uint disconnect_reason;
+static int64_t lease_deadline;
 static SemaphoreHandle_t lock, off_done;
 static atomic_bool shutting_down;
 static pearl_network_state state = {.message = "WiFi is off"};
@@ -65,12 +79,29 @@ static bool flag(unsigned which) {
   xSemaphoreTake(lock, portMAX_DELAY);
   bool value = which == 0   ? state.setup
                : which == 1 ? state.connected
-                            : state.scanning;
+               : which == 2 ? state.scanning
+                            : state.enabled;
   xSemaphoreGive(lock);
   return value;
 }
+bool pearl_network_enabled(void) {
+  if (!lock)
+    return false;
+  return flag(3);
+}
+static bool worker_start(void) {
+  if (worker_handle)
+    return true;
+  return xTaskCreate(worker, "pearl_wifi", 8192, NULL, 1, &worker_handle) ==
+         pdPASS;
+}
 static bool post(command c) {
-  return commands && !atomic_load(&shutting_down) &&
+  if (!lock || !commands)
+    return false;
+  xSemaphoreTake(lock, portMAX_DELAY);
+  bool running = worker_start();
+  xSemaphoreGive(lock);
+  return running && commands && !atomic_load(&shutting_down) &&
          xQueueSend(commands, &c, 0) == pdTRUE;
 }
 void pearl_network_setup(void) { post((command){.kind = SETUP}); }
@@ -78,7 +109,7 @@ void pearl_network_connect(void) { post((command){.kind = CONNECT}); }
 void pearl_network_scan(void) { post((command){.kind = SCAN}); }
 void pearl_network_off(void) { post((command){.kind = OFF}); }
 bool pearl_network_shutdown(void) {
-  if (!commands)
+  if (!commands || !worker_handle)
     return true;
   atomic_store(&shutting_down, true);
   xQueueReset(commands);
@@ -94,8 +125,11 @@ bool pearl_network_shutdown(void) {
 static void event(void *arg, esp_event_base_t base, int32_t id, void *data) {
   if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE)
     atomic_fetch_or(&events, E_SCAN);
-  if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
+  if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    wifi_event_sta_disconnected_t *disconnected = data;
+    atomic_store(&disconnect_reason, disconnected->reason);
     atomic_fetch_or(&events, E_DOWN);
+  }
   if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
     ip_event_got_ip_t *ip = data;
     xSemaphoreTake(lock, portMAX_DELAY);
@@ -310,27 +344,117 @@ static esp_err_t mutate(httpd_req_t *r) {
   httpd_resp_set_status(r, "202 Accepted");
   return httpd_resp_sendstr(r, "Queued");
 }
+/* Read-only bounded diagnostics. Provisioning routes remain AP-only. */
+static esp_err_t diagnostics(httpd_req_t *r) {
+  if (!flag(0) && !flag(1)) {
+    httpd_resp_set_status(r, "503 Service Unavailable");
+    return httpd_resp_sendstr(r, "Not connected");
+  }
+  unsigned retry_count, lease_seconds;
+  xSemaphoreTake(lock, portMAX_DELAY);
+  retry_count = state.retries;
+  lease_seconds = state.lease_seconds;
+  xSemaphoreGive(lock);
+  pearl_state audio = pearl_audio_state();
+  unsigned albums, tracks;
+  pearl_library_counts(&albums, &tracks);
+  char *json = malloc(1200);
+  if (!json)
+    return httpd_resp_send_err(r, HTTPD_500_INTERNAL_SERVER_ERROR,
+                               "Out of memory");
+  int length = snprintf(
+      json, 1200,
+      "{\"uptime_ms\":%llu,\"reset_reason\":%d,\"wake_cause\":%d,\"battery_"
+      "percent\":null,\"audio\":{\"ready\":%s,\"playing\":%s,\"track\":%d,"
+      "\"volume\":%d,\"seconds\":%lu},\"library\":{\"albums\":%u,\"tracks\":%u}"
+      ",\"power\":{\"screen_asleep\":%s,\"deep_sleep_supported\":%s,\"usb_"
+      "connected\":%s,\"idle_ms\":%lu},\"memory\":{\"free_internal\":%u,"
+      "\"minimum_internal\":%u,\"largest_internal\":%u,\"free_psram\":%u,"
+      "\"worker_stack_free\":%u},\"wifi\":{\"setup\":%s,\"connected\":%s,"
+      "\"scanning\":%s,\"retries\":%u,\"disconnect_reason\":%u,\"lease_"
+      "seconds\":%llu}}",
+      (unsigned long long)(esp_timer_get_time() / 1000), esp_reset_reason(),
+      esp_sleep_get_wakeup_cause(), audio.ready ? "true" : "false",
+      audio.ready && !audio.paused ? "true" : "false", audio.track,
+      audio.volume, (unsigned long)audio.seconds, albums, tracks,
+      pearl_power_screen_asleep() ? "true" : "false",
+      pearl_power_deep_supported() ? "true" : "false",
+      usb_serial_jtag_is_connected() ? "true" : "false",
+      (unsigned long)((uint32_t)(esp_timer_get_time() / 1000) -
+                      pearl_power_last_activity()),
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+      (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL |
+                                                MALLOC_CAP_8BIT),
+      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
+                                                 MALLOC_CAP_8BIT),
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+      (unsigned)uxTaskGetStackHighWaterMark(worker_handle),
+      flag(0) ? "true" : "false", flag(1) ? "true" : "false",
+      flag(2) ? "true" : "false", retry_count, atomic_load(&disconnect_reason),
+      (unsigned long long)lease_seconds);
+  esp_err_t result;
+  if (length < 0 || length >= 1200)
+    result = httpd_resp_send_err(r, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                 "Status too large");
+  else {
+    httpd_resp_set_type(r, "application/json");
+    httpd_resp_set_hdr(r, "Cache-Control", "no-store");
+    result = httpd_resp_send(r, json, length);
+  }
+  free(json);
+  return result;
+}
+static void schedule_retry(void) {
+  if (retries >= 5) {
+    bool setup = flag(0);
+    want_connect = false;
+    connect_deadline = retry_at = 0;
+    if (!setup)
+      stop();
+    message("Connection attempts stopped. Check saved networks in setup.");
+    return;
+  }
+  retry_at = esp_timer_get_time() + pearl_wifi_retry_delay(retries ? retries - 1 : 0) * 1000000LL;
+}
 static bool initialize(void) {
   if (initialized)
     return true;
   if (initialization_attempted)
     return false;
   initialization_attempted = true;
-  esp_err_t e = esp_netif_init();
-  if (e != ESP_OK)
+  if (!base_ready) {
+    esp_err_t e = esp_netif_init();
+    if (e != ESP_OK)
+      return false;
+    e = esp_event_loop_create_default();
+    if (e != ESP_OK && e != ESP_ERR_INVALID_STATE)
+      return false;
+    if (!esp_netif_create_default_wifi_sta())
+      return false;
+    ap_netif = esp_netif_create_default_wifi_ap();
+    if (!ap_netif)
+      return false;
+    if (esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, event, NULL) !=
+            ESP_OK ||
+        esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, event,
+                                   NULL) != ESP_OK)
+      return false;
+    base_ready = true;
+  }
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 48000 ||
+      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) <
+          16384)
     return false;
-  e = esp_event_loop_create_default();
-  if (e != ESP_OK && e != ESP_ERR_INVALID_STATE)
-    return false;
-  esp_netif_create_default_wifi_sta();
-  ap_netif = esp_netif_create_default_wifi_ap();
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  if (!ap_netif || esp_wifi_init(&cfg) != ESP_OK)
+  if (esp_wifi_init(&cfg) != ESP_OK)
     return false;
-  esp_wifi_set_storage(WIFI_STORAGE_RAM);
-  esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, event, NULL);
-  esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, event, NULL);
   initialized = true;
+  if (esp_wifi_set_storage(WIFI_STORAGE_RAM) != ESP_OK ||
+      esp_wifi_set_ps(WIFI_PS_MIN_MODEM) != ESP_OK) {
+    esp_wifi_deinit();
+    initialized = false;
+    return false;
+  }
   return true;
 }
 static void stop(void) {
@@ -347,6 +471,13 @@ static void stop(void) {
     esp_wifi_stop();
     started = false;
   }
+  if (initialized) {
+    esp_wifi_deinit();
+    initialized = false;
+    initialization_attempted = false;
+  }
+  initialization_attempted = false;
+  lease_deadline = 0;
   atomic_store(&events, 0);
   memset(token, 0, sizeof(token));
   xSemaphoreTake(lock, portMAX_DELAY);
@@ -354,15 +485,23 @@ static void stop(void) {
   xSemaphoreGive(lock);
 }
 static __attribute__((noinline)) bool start(bool setup) {
+  if (started && flag(0) == setup) {
+    lease_deadline =
+        esp_timer_get_time() + (setup ? CONFIG_PEARL_WIFI_SETUP_SEC
+                                      : CONFIG_PEARL_WIFI_DIAGNOSTIC_SEC) *
+                                   1000000LL;
+    return true;
+  }
+  stop();
   if (!initialize()) {
-    message("WiFi unavailable. Restart to try again.");
+    message("WiFi unavailable or memory low. Music remains available.");
     return false;
   }
-  if (started && flag(0) == setup)
-    return true;
-  stop();
-  if (esp_wifi_set_mode(setup ? WIFI_MODE_APSTA : WIFI_MODE_STA) != ESP_OK)
+  if (esp_wifi_set_mode(setup ? WIFI_MODE_APSTA : WIFI_MODE_STA) != ESP_OK) {
+    stop();
+    message("WiFi mode unavailable. Try again.");
     return false;
+  }
   if (setup) {
     wifi_config_t ap = {0};
     unsigned char random[8];
@@ -375,8 +514,11 @@ static __attribute__((noinline)) bool start(bool setup) {
     ap.ap.channel = 1;
     ap.ap.max_connection = 2;
     ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
-    if (esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK)
+    if (esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK) {
+      stop();
+      message("Setup configuration failed. Try again.");
       return false;
+    }
     esp_fill_random(random, sizeof(random));
     for (unsigned i = 0; i < 8; i++)
       snprintf(token + i * 2, 3, "%02x", random[i]);
@@ -399,23 +541,33 @@ static __attribute__((noinline)) bool start(bool setup) {
   state.enabled = true;
   state.setup = setup;
   xSemaphoreGive(lock);
-  if (setup) {
+  lease_deadline =
+      esp_timer_get_time() +
+      (setup ? CONFIG_PEARL_WIFI_SETUP_SEC : CONFIG_PEARL_WIFI_DIAGNOSTIC_SEC) *
+          1000000LL;
+  {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 8192;
-    cfg.max_uri_handlers = 4;
+    cfg.max_uri_handlers = 5;
     if (httpd_start(&server, &cfg) != ESP_OK) {
       stop();
       message("Setup could not start.");
       return false;
     }
     httpd_uri_t routes[] = {
+        {.uri = "/status", .method = HTTP_GET, .handler = diagnostics},
         {.uri = "/", .method = HTTP_GET, .handler = page},
         {.uri = "/state", .method = HTTP_GET, .handler = snapshot},
         {.uri = "/scan", .method = HTTP_POST, .handler = mutate},
         {.uri = "/save", .method = HTTP_POST, .handler = mutate}};
-    for (unsigned i = 0; i < 4; i++)
-      httpd_register_uri_handler(server, &routes[i]);
-    message("Setup ready. Join the network shown here.");
+    for (unsigned i = 0; i < 5; i++)
+      if (httpd_register_uri_handler(server, &routes[i]) != ESP_OK) {
+        stop();
+        message("Diagnostic server unavailable.");
+        return false;
+      }
+    if (setup)
+      message("Setup ready. Join the network shown here.");
   }
   return true;
 }
@@ -428,10 +580,18 @@ static void connect_selected(void) {
   memcpy(cfg.sta.password, profiles[selected].password,
          strlen(profiles[selected].password));
   cfg.sta.pmf_cfg.capable = true;
+  retries++;
+  xSemaphoreTake(lock, portMAX_DELAY);
+  state.retries = retries;
+  xSemaphoreGive(lock);
   esp_wifi_disconnect();
-  esp_wifi_set_config(WIFI_IF_STA, &cfg);
+  if (esp_wifi_set_config(WIFI_IF_STA, &cfg) != ESP_OK) {
+    schedule_retry();
+    message("Network configuration failed.");
+    return;
+  }
   if (esp_wifi_connect() != ESP_OK) {
-    retry_at = esp_timer_get_time() + 60000000;
+    schedule_retry();
     message("Connection failed. Check your saved network in setup.");
   } else {
     connect_deadline = esp_timer_get_time() + 20000000;
@@ -460,8 +620,10 @@ static __attribute__((noinline)) void scan(bool pick) {
     state.scanning = false;
     xSemaphoreGive(lock);
     message("Scan could not start. Try again.");
-    if (want_connect)
-      retry_at = esp_timer_get_time() + 60000000;
+    if (want_connect) {
+      retries++;
+      schedule_retry();
+    }
   }
 }
 static __attribute__((noinline)) void scan_done(void) {
@@ -497,8 +659,10 @@ static __attribute__((noinline)) void scan_done(void) {
   free(records);
   if (!good) {
     message("Scan failed. Try again.");
-    if (want_connect)
-      retry_at = esp_timer_get_time() + 60000000;
+    if (want_connect) {
+      retries++;
+      schedule_retry();
+    }
     return;
   }
   if (select_after_scan) {
@@ -547,6 +711,7 @@ static void worker(void *arg) {
           message("No saved networks. Open WiFi setup first.");
         else if (start(false)) {
           want_connect = true;
+          retries = 0;
           scan(true);
         }
       } else if (c.kind == SCAN) {
@@ -558,6 +723,7 @@ static void worker(void *arg) {
         xSemaphoreGive(lock);
         if (saved) {
           want_connect = true;
+          retries = 0;
           if (flag(2)) {
             esp_wifi_scan_stop();
             esp_wifi_clear_ap_list();
@@ -574,6 +740,11 @@ static void worker(void *arg) {
       }
       memset(&c, 0, sizeof(c));
     }
+    xSemaphoreTake(lock, portMAX_DELAY);
+    state.retries = retries;
+    int64_t remaining = lease_deadline - esp_timer_get_time();
+    state.lease_seconds = remaining > 0 ? remaining / 1000000 : 0;
+    xSemaphoreGive(lock);
     unsigned e = atomic_exchange(&events, 0);
     if (!started)
       continue;
@@ -583,10 +754,21 @@ static void worker(void *arg) {
       if (!(e & E_IP))
         state.ip[0] = 0;
       xSemaphoreGive(lock);
+      unsigned reason = atomic_load(&disconnect_reason);
+      xSemaphoreTake(lock, portMAX_DELAY);
+      state.disconnect_reason = reason;
+      xSemaphoreGive(lock);
+      if (want_connect && (reason == WIFI_REASON_AUTH_FAIL ||
+                           reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT)) {
+        want_connect = false;
+        connect_deadline = retry_at = 0;
+        if (!flag(0))
+          stop();
+        message("Authentication failed. Check your password in setup.");
+      }
       if (want_connect && !flag(2) && !connect_deadline) {
-        retry_at = esp_timer_get_time() + 60000000;
-        message(
-            "Disconnected. Retrying in a minute; setup is still available.");
+        schedule_retry();
+        message("Disconnected. Retrying with backoff.");
       }
     }
     if (e & E_IP) {
@@ -594,6 +776,7 @@ static void worker(void *arg) {
       state.connected = true;
       xSemaphoreGive(lock);
       connect_deadline = retry_at = 0;
+      retries = 0;
     }
     if ((e & E_SCAN) && flag(2))
       scan_done();
@@ -601,8 +784,13 @@ static void worker(void *arg) {
     if (connect_deadline && now >= connect_deadline) {
       connect_deadline = 0;
       esp_wifi_disconnect();
-      retry_at = now + 60000000;
+      schedule_retry();
       message("Connection timed out. Check password and network in setup.");
+    }
+    if (lease_deadline && now >= lease_deadline) {
+      stop();
+      message("WiFi session finished. Radio is off.");
+      continue;
     }
     if (want_connect && retry_at && now >= retry_at && !flag(2)) {
       retry_at = 0;
@@ -617,11 +805,16 @@ void pearl_network_init(void) {
   off_done = xSemaphoreCreateBinary();
   commands = xQueueCreate(4, sizeof(command));
   if (!off_done || !commands ||
-      xTaskCreate(worker, "pearl_wifi", 8192, NULL, 1, NULL) != pdPASS) {
+      ((esp_reset_reason() == ESP_RST_PANIC ||
+        esp_reset_reason() == ESP_RST_TASK_WDT ||
+        esp_reset_reason() == ESP_RST_INT_WDT)
+           ? false
+           : !worker_start())) {
     if (commands) {
       vQueueDelete(commands);
       commands = NULL;
     }
     message("WiFi unavailable: out of memory.");
-  }
+  } else if (!worker_handle)
+    message("WiFi delayed after crash. Open setup to retry.");
 }

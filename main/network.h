@@ -9,6 +9,7 @@ typedef struct {
 } pearl_wifi_ap;
 typedef struct {
   bool enabled, setup, connected, scanning;
+  unsigned retries, disconnect_reason, lease_seconds;
   unsigned count;
   char message[120], ip[16], ap_ssid[33], ap_password[17];
   pearl_wifi_ap aps[PEARL_WIFI_SCAN_LIMIT];
@@ -22,6 +23,7 @@ static inline void pearl_network_connect(void) {}
 static inline void pearl_network_off(void) {}
 #else
 void pearl_network_init(void);
+bool pearl_network_enabled(void);
 pearl_network_state pearl_network_snapshot(void);
 void pearl_network_setup(void);
 void pearl_network_connect(void);

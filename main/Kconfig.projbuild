@@ -12,3 +12,26 @@ config PEARL_MAX_VOLUME
     range 1 100
     default 65
 endmenu
+
+menu "Listener power management"
+config PEARL_SCREEN_TIMEOUT_SEC
+    int "Screen sleep after inactivity (seconds, 0 disables)"
+    range 0 3600
+    default 45
+config PEARL_IDLE_SLEEP_SEC
+    int "Deep sleep when paused and idle (seconds, 0 disables)"
+    range 0 7200
+    default 300
+config PEARL_BRIGHTNESS
+    int "OLED brightness (16-255)"
+    range 16 255
+    default 192
+config PEARL_WIFI_SETUP_SEC
+    int "WiFi setup session lifetime (seconds)"
+    range 60 3600
+    default 300
+config PEARL_WIFI_DIAGNOSTIC_SEC
+    int "Connected diagnostic session lifetime (seconds)"
+    range 60 3600
+    default 900
+endmenu

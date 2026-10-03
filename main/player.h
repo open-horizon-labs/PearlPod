@@ -37,3 +37,5 @@ void pearl_audio_shutdown(void);
 pearl_state pearl_audio_state(void);
 void pearl_ui_start(void);
 void pearl_ui_ready(pearl_library *lib,const char *error);
+
+void pearl_ui_power(bool asleep);

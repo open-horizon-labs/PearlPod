@@ -16,3 +16,6 @@ custom.toml
 # Firmware is distributed through private GitHub releases.
 dist/
 recovery/
+
+# Local UI verification captures
+docs/ui/current/

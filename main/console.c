@@ -1,5 +1,9 @@
 #include "player.h"
 #include "network.h"
+#include "power.h"
+#include "esp_timer.h"
+#include "driver/usb_serial_jtag.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -18,13 +22,15 @@ static void run(const char *line){
  else if(!strcmp(line,"next"))pearl_audio_step(1);
  else if(!strcmp(line,"prev"))pearl_audio_step(-1);
  else if(!strncmp(line,"volume ",7)){pearl_state s=pearl_audio_state();pearl_audio_volume(atoi(line+7)-s.volume);}
+ else if(!strcmp(line,"power"))printf("PEARL power screen_asleep=%d deep_supported=%d usb_connected=%d idle_ms=%lu\n",pearl_power_screen_asleep(),pearl_power_deep_supported(),usb_serial_jtag_is_connected(),(unsigned long)((uint32_t)(esp_timer_get_time()/1000)-pearl_power_last_activity()));
+ else if(!strcmp(line,"memory"))printf("PEARL memory internal=%u minimum=%u largest=%u psram=%u\n",(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
  else if(!strcmp(line,"wifi setup"))pearl_network_setup();
  else if(!strcmp(line,"wifi scan"))pearl_network_scan();
  else if(!strcmp(line,"wifi connect"))pearl_network_connect();
  else if(!strcmp(line,"wifi off"))pearl_network_off();
  else if(!strcmp(line,"wifi status")){pearl_network_state s=pearl_network_snapshot();printf("PEARL wifi enabled=%d setup=%d connected=%d scanning=%d count=%u ip=%s message=%s\n",s.enabled,s.setup,s.connected,s.scanning,s.count,s.ip,s.message);for(unsigned i=0;i<s.count;i++)printf("PEARL AP %s rssi=%d secure=%d\n",s.aps[i].ssid,s.aps[i].rssi,s.aps[i].secure);}
  else if(!strcmp(line,"buttons"))printf("PEARL buttons gpio0=%d gpio47=%d gpio48=%d\n",gpio_get_level(0),gpio_get_level(47),gpio_get_level(48));
- else printf("PEARL commands: status, list, groups, play N, playgroup N P, rescan, pause, next, prev, volume N, buttons, wifi setup/scan/connect/off/status\n");
+ else printf("PEARL commands: status, list, groups, play N, playgroup N P, rescan, pause, next, prev, volume N, buttons, memory, power, wifi setup/scan/connect/off/status\n");
  fflush(stdout);
 }
 static void task(void *arg){char line[128];unsigned n=0;while(1){int c=getchar();if(c==EOF){clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(20));continue;}if(c=='\r'||c=='\n'){if(n){line[n]=0;run(line);n=0;}}else if(n<sizeof(line)-1)line[n++]=c;}}

@@ -112,6 +112,8 @@ esp_err_t panel_qspi_amoled_set_brightness(esp_lcd_panel_t *panel, uint8_t brigh
         },                                                      \
     }
 
+esp_err_t panel_qspi_amoled_sleep(esp_lcd_panel_handle_t panel, bool asleep);
+
 #ifdef __cplusplus
 }
 #endif

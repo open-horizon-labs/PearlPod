@@ -355,3 +355,8 @@ static esp_err_t panel_qspi_amoled_disp_on_off(esp_lcd_panel_t *panel, bool on_o
     ESP_RETURN_ON_ERROR(tx_param(qspi_amoled, io, command, NULL, 0), TAG, "send command failed");
     return ESP_OK;
 }
+
+esp_err_t panel_qspi_amoled_sleep(esp_lcd_panel_handle_t panel, bool asleep) {
+    qspi_amoled_panel_t *lcd = __containerof(panel, qspi_amoled_panel_t, base);
+    return tx_param(lcd, lcd->io, asleep ? LCD_CMD_SLPIN : LCD_CMD_SLPOUT, NULL, 0);
+}
