@@ -1,0 +1,14 @@
+menu "Listener Player"
+config PEARL_BUTTON_UP
+    int "Volume-up / power GPIO"
+    range 0 48
+    default 0
+config PEARL_BUTTON_DOWN
+    int "Volume-down / screen lock GPIO"
+    range 0 48
+    default 48
+config PEARL_MAX_VOLUME
+    int "Maximum software volume (percent)"
+    range 1 100
+    default 65
+endmenu

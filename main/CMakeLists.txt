@@ -1,0 +1,1 @@
+idf_component_register(SRCS "main.c" "library.c" "audio.c" "ui.c" "welcome.c" "artwork.c" "console.c" INCLUDE_DIRS "." "../vendor" REQUIRES esp_lcd_qspi_amoled esp_lcd_touch_cst820 lvgl esp_driver_i2s esp_driver_sdmmc fatfs nvs_flash esp_timer esp_driver_gpio esp_driver_i2c esp_driver_spi esp_hw_support)
