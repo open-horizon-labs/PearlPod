@@ -82,6 +82,10 @@ static uint8_t ftp_stop = 0;
  ******************************************************************************/
 static ftp_data_t ftp_data = {0};
 #include <stdatomic.h>
+#include "async_writer.h"
+static pearl_writer *writer;
+static bool async_file;
+static char last_writer_trace[256];
 #ifdef PEARL_FTP_HOST
 #include <time.h>
 static uint64_t trace_clock(void) { struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000000+t.tv_nsec/1000; }
@@ -101,6 +105,8 @@ void pearl_ftp_reset_progress(void) {
 }
 void pearl_ftp_trace(char *out,unsigned size) {
  snprintf(out,size,"state=%d substate=%d replies=%u last_reply=%u bytes=%u reads=%u recv_us=%u recv_max_us=%u empty=%u writes=%u write_us=%u write_max_us=%u flush_us=%u",atomic_load(&trace_state),atomic_load(&trace_substate),atomic_load(&reply_count),atomic_load(&last_reply),atomic_load(&received_bytes),atomic_load(&receive_calls),atomic_load(&receive_us),atomic_load(&receive_max_us),atomic_load(&empty_reads),atomic_load(&write_calls),atomic_load(&write_us),atomic_load(&write_max_us),atomic_load(&flush_us));
+ unsigned used=strlen(out);
+ if(used+1<size){out[used++]=' ';if(writer)pearl_writer_trace(writer,out+used,size-used);else snprintf(out+used,size-used,"%s",last_writer_trace);}
 }
 static char *ftp_path = NULL;
 static char *ftp_scratch_buffer = NULL;;
@@ -148,7 +154,8 @@ static bool ftp_open_file (const char *path, const char *mode) {
     if(setvbuf(ftp_data.fp,file_buffer,_IOFBF,32768)!=0) {
         fclose(ftp_data.fp);ftp_data.fp=NULL;return false;
     }
-    file_failed=false;
+    file_failed=false;async_file=mode[0]!='r';
+    if(async_file&&!pearl_writer_begin(writer,ftp_data.fp)){fclose(ftp_data.fp);ftp_data.fp=NULL;async_file=false;return false;}
 	ftp_data.e_open = E_FTP_FILE_OPEN;
 	return true;
 }
@@ -157,7 +164,8 @@ static bool ftp_open_file (const char *path, const char *mode) {
 static void ftp_close_files_dir (void) {
 	if (ftp_data.e_open == E_FTP_FILE_OPEN) {
         uint64_t before=trace_clock();
-        if(fclose(ftp_data.fp)!=0)file_failed=true;
+        if(async_file){if(!pearl_writer_finish(writer,true))file_failed=true;async_file=false;ftp_data.fp=NULL;}
+        if(ftp_data.fp&&fclose(ftp_data.fp)!=0)file_failed=true;
         atomic_fetch_add(&flush_us,(unsigned)(trace_clock()-before));
 		ftp_data.fp = NULL;
 	}
@@ -199,19 +207,13 @@ static ftp_result_t ftp_read_file (char *filebuf, uint32_t desiredsize, uint32_t
 }
 
 //-----------------------------------------------------------------
-static ftp_result_t ftp_write_file (char *filebuf, uint32_t size) {
-	ftp_result_t result = E_FTP_RESULT_FAILED;
-	uint64_t before=trace_clock();
-    uint32_t actualsize = fwrite(filebuf, 1, size, ftp_data.fp);
-    unsigned duration=trace_clock()-before;
-    atomic_fetch_add(&write_calls,1);atomic_fetch_add(&write_us,duration);trace_max(&write_max_us,duration);
-    atomic_fetch_add(&received_bytes,actualsize);
-	if (actualsize == size) {
-		result = E_FTP_RESULT_OK;
-	} else {
-		ftp_close_files_dir();
-	}
-	return result;
+static ftp_result_t ftp_write_file(char *filebuf,uint32_t size){
+ uint64_t before=trace_clock();
+ bool queued=pearl_writer_append(writer,filebuf,size);
+ unsigned duration=trace_clock()-before;
+ atomic_fetch_add(&write_calls,1);atomic_fetch_add(&write_us,duration);trace_max(&write_max_us,duration);
+ if(queued){atomic_fetch_add(&received_bytes,size);return E_FTP_RESULT_OK;}
+ return E_FTP_RESULT_FAILED;
 }
 
 //---------------------------------------------------------------
@@ -585,7 +587,7 @@ static void ftp_fix_path(char *pwd) {
 static void ftp_open_child(char *pwd, char *dir) {
     char joined[128];
     int n=snprintf(joined,sizeof(joined),"%s%s%s",dir[0]=='/'?"":pwd,
-                   dir[0]=='/'||!strcmp(pwd,"/")?"":"/",dir);
+                   dir[0]=='/'||pwd[strlen(pwd)-1]=='/'?"":"/",dir);
     if(n<0||n>=96||strstr(joined,"..")){strcpy(pwd,"/invalid");return;}
     strcpy(pwd,joined);
 }
@@ -1058,6 +1060,11 @@ static void ftp_wait_for_enabled (void) {
 
 //---------------------
 void ftp_deinit(void) {
+    if(writer){
+        pearl_writer_trace(writer,last_writer_trace,sizeof(last_writer_trace));
+        if(!pearl_writer_destroy(writer))return;
+        writer=NULL;
+    }
 	if(file_buffer) free(file_buffer);
     file_buffer=NULL;
 	if (ftp_path) free(ftp_path);
@@ -1075,6 +1082,10 @@ bool ftp_init(void) {
 	ftp_stop = 0;
 	// Allocate memory for the data buffer, and the file system structures (from the RTOS heap)
 	ftp_deinit();
+    if(writer)return false;
+    last_writer_trace[0]=0;
+    writer=pearl_writer_create(2u*1024u*1024u);
+    if(!writer)return false;
 
 	memset(&ftp_data, 0, sizeof(ftp_data_t));
     #ifdef PEARL_FTP_HOST
@@ -1188,6 +1199,8 @@ int ftp_run (uint32_t elapsed)
 			break;
 		case E_FTP_STE_CONTINUE_FILE_RX:
 			{
+                if(pearl_writer_failed(writer)){ftp_close_files_dir();ftp_send_reply(552,NULL);ftp_data.state=E_FTP_STE_END_TRANSFER;break;}
+                if(pearl_writer_space(writer)<(unsigned)ftp_buff_size){pearl_writer_backpressure(writer);break;} /* Backpressure: leave bytes in TCP. */
 				int32_t len;
 				ftp_result_t result = E_FTP_RESULT_OK;
 
@@ -1219,8 +1232,12 @@ int ftp_run (uint32_t elapsed)
 				}
 				else {
 					// File received (E_FTP_RESULT_FAILED)
+                    if(async_file){
+                        if(!pearl_writer_finish(writer,len<0))file_failed=true;
+                        async_file=false;ftp_data.fp=NULL;
+                    }
 					ftp_close_files_dir();
-                    ftp_send_reply(file_failed||len<0?451:226, NULL);
+                    ftp_send_reply(file_failed?552:len<0?451:226, NULL);
 					ftp_data.state = E_FTP_STE_END_TRANSFER;
 					ESP_LOGI(FTP_TAG, "File received (%"PRIu32" bytes in %"PRIu32" msec).", ftp_data.total, ftp_data.time);
 					break;

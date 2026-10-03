@@ -95,6 +95,14 @@ class SyncTests(unittest.TestCase):
                 ftp=ftplib.FTP();ftp.connect(ip,2121,timeout=5)
                 self.assertEqual(ftp.pwd(),'/')  # No login/password handshake required
                 with self.assertRaises(ftplib.error_perm):ftp.cwd('../../')
+                import io
+                ftp.cwd('/objects')
+                for i in range(120):
+                    payload=('relative upload %d' % i).encode()
+                    relative=hashlib.sha256(payload).hexdigest()+'.lrc'
+                    ftp.storbinary('STOR '+relative,io.BytesIO(payload))
+                    self.assertEqual((pod/'objects'/relative).read_bytes(),payload)
+                self.assertIn(ftp.pwd(),('/objects','/objects/'))
                 ftp.quit()
             finally:
                 process.terminate();out,err=process.communicate(timeout=5)

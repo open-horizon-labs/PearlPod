@@ -582,6 +582,10 @@ static void connect_selected(void) {
          strlen(profiles[selected].ssid));
   memcpy(cfg.sta.password, profiles[selected].password,
          strlen(profiles[selected].password));
+  cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+  cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+  cfg.sta.rm_enabled = 1;
+  cfg.sta.btm_enabled = 1;
   cfg.sta.pmf_cfg.capable = true;
   retries++;
   xSemaphoreTake(lock, portMAX_DELAY);
@@ -791,7 +795,7 @@ static void worker(void *arg) {
       schedule_retry();
       message("Connection timed out. Check password and network in setup.");
     }
-    if (lease_deadline && now >= lease_deadline) {
+    if (lease_deadline && now >= lease_deadline && !pearl_sync_busy()) {
       stop();
       message("WiFi session finished. Radio is off.");
       continue;

@@ -651,6 +651,12 @@ void app_main(void)
     ESP_LOGW("pearl","UI ready at %lld ms",esp_timer_get_time()/1000);
 }
 
+static sdmmc_card_t *mounted_card;
+static unsigned sd_dma_bytes;
+void pearl_sd_trace(char *out,unsigned size){
+ if(!mounted_card){snprintf(out,size,"card=unmounted");return;}
+ snprintf(out,size,"actual_khz=%d bus_width=%d sector=%d dma_bytes=%u chunk_sectors=%u",mounted_card->real_freq_khz,mounted_card->log_bus_width==2?4:1,mounted_card->csd.sector_size,sd_dma_bytes,(unsigned)mounted_card->host.unaligned_multi_block_rw_max_chunk_size);
+}
 static void library_task(void *arg)
 {
     sdmmc_host_t host=SDMMC_HOST_DEFAULT();host.max_freq_khz=SDMMC_FREQ_HIGHSPEED;
@@ -665,7 +671,8 @@ static void library_task(void *arg)
     esp_vfs_fat_sdmmc_mount_config_t cfg={.format_if_mount_failed=false,.max_files=12,.allocation_unit_size=16384};
     sdmmc_card_t *card=NULL;esp_err_t e=esp_vfs_fat_sdmmc_mount("/sdcard",&host,&slot,&cfg,&card);
     if(e!=ESP_OK){free(sd_dma);sd_dma=NULL;}
-    else ESP_LOGW("pearl","SDMMC actual_khz=%d bus_width=%d sector=%d bounce_bytes=%u chunk_sectors=%u",card->real_freq_khz,card->log_bus_width==2?4:1,card->csd.sector_size,sd_dma?8192u:0u,16u);
+    else {mounted_card=card;sd_dma_bytes=sd_dma?8192:0;}
+    if(e==ESP_OK)ESP_LOGW("pearl","SDMMC actual_khz=%d bus_width=%d sector=%d bounce_bytes=%u chunk_sectors=%u",card->real_freq_khz,card->log_bus_width==2?4:1,card->csd.sector_size,sd_dma?8192u:0u,16u);
     const char *err="";
     if(e!=ESP_OK)err="Card not ready. Insert a FAT32 card and restart.";
     else if(pearl_library_scan(&music,"/sdcard/music"))err="Add a music folder to your card, then restart.";

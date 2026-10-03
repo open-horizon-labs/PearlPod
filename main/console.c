@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+extern void pearl_sd_trace(char *out,unsigned size);
 static pearl_library *lib;
 static void run(const char *line){
  if(!strcmp(line,"status")){pearl_state s=pearl_audio_state();printf("PEARL status ready=%d track=%d paused=%d volume=%d seconds=%lu error=%s\n",s.ready,s.track,s.paused,s.volume,(unsigned long)s.seconds,s.error);}
@@ -26,10 +27,11 @@ static void run(const char *line){
  else if(!strncmp(line,"volume ",7)){pearl_state s=pearl_audio_state();pearl_audio_volume(atoi(line+7)-s.volume);}
  else if(!strcmp(line,"power"))printf("PEARL power screen_asleep=%d deep_supported=%d usb_connected=%d idle_ms=%lu\n",pearl_power_screen_asleep(),pearl_power_deep_supported(),usb_serial_jtag_is_connected(),(unsigned long)((uint32_t)(esp_timer_get_time()/1000)-pearl_power_last_activity()));
  else if(!strcmp(line,"memory"))printf("PEARL memory internal=%u minimum=%u largest=%u psram=%u\n",(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+ else if(!strcmp(line,"sd trace")){char trace[160];pearl_sd_trace(trace,sizeof(trace));printf("PEARL sd %s\n",trace);}
  else if(!strcmp(line,"sync cancel"))pearl_sync_cancel();
  else if(!strcmp(line,"sync"))pearl_sync_start();
  else if(!strncmp(line,"sync source ",12))printf("PEARL sync source saved=%d\n",pearl_sync_source(line+12));
- else if(!strcmp(line,"sync trace")){char trace[768];pearl_sync_trace(trace,sizeof(trace));printf("PEARL sync trace %s\n",trace);}
+ else if(!strcmp(line,"sync trace")){static char trace[1024];pearl_sync_trace(trace,sizeof(trace));printf("PEARL sync trace %s\n",trace);}
  else if(!strcmp(line,"sync status")){char msg[120];pearl_sync_status(msg,sizeof(msg));printf("PEARL sync %s\n",msg);}
  else if(!strcmp(line,"wifi portal"))printf("PEARL captive active=%d dns_replies=%u\n",pearl_captive_dns_active(),pearl_captive_dns_replies());
  else if(!strcmp(line,"wifi setup"))pearl_network_setup();
@@ -42,4 +44,4 @@ static void run(const char *line){
  fflush(stdout);
 }
 static void task(void *arg){char line[256];unsigned n=0;while(1){int c=getchar();if(c==EOF){clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(20));continue;}if(c=='\r'||c=='\n'){if(n){line[n]=0;run(line);n=0;}}else if(n<sizeof(line)-1)line[n++]=c;}}
-void pearl_console_start(pearl_library *l){lib=l;gpio_set_direction(47,GPIO_MODE_INPUT);gpio_pullup_en(47);xTaskCreate(task,"console",4096,NULL,1,NULL);}
+void pearl_console_start(pearl_library *l){lib=l;gpio_set_direction(47,GPIO_MODE_INPUT);gpio_pullup_en(47);xTaskCreate(task,"console",6144,NULL,1,NULL);}

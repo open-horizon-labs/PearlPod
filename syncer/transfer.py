@@ -62,7 +62,7 @@ def capacity(required, existing, free_bytes, catalog_bytes):
     return needed
 
 
-def deliver(cache, head, address, port=21, timeout=840, free_bytes=None, trace=None):
+def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=None):
     ip=ipaddress.ip_address(address)
     if ip.version!=4 or not ip.is_private or ip.is_loopback or ip.is_multicast or ip.is_unspecified:
         raise ValueError('Expected a local Pod IPv4 address')
@@ -82,6 +82,7 @@ def deliver(cache, head, address, port=21, timeout=840, free_bytes=None, trace=N
             if 'file' in record:required[record['file']]=record['bytes']
         before=time.monotonic()
         existing=inventory(ip,port)
+        metrics.update(object_count=len(required),object_bytes=sum(required.values()),missing_objects=sum(existing.get(n)!=b for n,b in required.items()),missing_bytes=sum(b for n,b in required.items() if existing.get(n)!=b))
         mark("inventory_ms",before)
         capacity(required,existing,free_bytes,catalog.stat().st_size)
     before=time.monotonic()
