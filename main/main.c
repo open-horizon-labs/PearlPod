@@ -2,6 +2,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdatomic.h>
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/spi_master.h"
@@ -28,6 +29,12 @@ static const char *TAG = "example";
 static SemaphoreHandle_t lvgl_mux = NULL;
 static esp_lcd_panel_handle_t player_panel;
 static pearl_library music;
+static TaskHandle_t rescan_task_handle;
+static atomic_bool rescan_running;
+static bool audio_started;
+static SemaphoreHandle_t library_access;
+bool pearl_library_lock(void){return library_access&&xSemaphoreTake(library_access,pdMS_TO_TICKS(5000))==pdTRUE;}
+void pearl_library_unlock(void){xSemaphoreGive(library_access);}
 static volatile bool screen_locked;
 
 
@@ -454,6 +461,7 @@ static void buttons_task(void *arg);
 
 void app_main(void)
 {
+    library_access=xSemaphoreCreateMutex();
     esp_err_t nvs_err=nvs_flash_init();
     if(nvs_err!=ESP_OK)ESP_LOGW("pearl","Preferences unavailable: %s",esp_err_to_name(nvs_err));
     static lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
@@ -611,7 +619,7 @@ void app_main(void)
     }
     xTaskCreate(library_task,"library",8192,NULL,2,NULL);
     xTaskCreate(buttons_task,"buttons",4096,NULL,3,NULL);
-    pearl_console_start(&music);
+
     ESP_LOGW("pearl","UI ready at %lld ms",esp_timer_get_time()/1000);
 }
 
@@ -626,11 +634,23 @@ static void library_task(void *arg)
     const char *err="";
     if(e!=ESP_OK)err="Card not ready. Insert a FAT32 card and restart.";
     else if(pearl_library_scan(&music,"/sdcard/music"))err="Add a music folder to your card, then restart.";
-    else pearl_audio_start(&music);
+    else {pearl_audio_start(&music);audio_started=true;}
     if(example_lvgl_lock(-1)){pearl_ui_ready(&music,err);example_lvgl_unlock();}
+    pearl_console_start(&music);
     ESP_LOGW("pearl","Library ready at %lld ms: %u albums, %u tracks; %s",esp_timer_get_time()/1000,music.album_count,music.track_count,err);
     vTaskDelete(NULL);
 }
+static void rescan_task(void *arg){
+    if(!audio_started||!pearl_audio_detach()){if(example_lvgl_lock(-1)){pearl_ui_ready(&music,"Cannot rescan now. Restart with the card inserted.");example_lvgl_unlock();}rescan_running=false;vTaskDelete(NULL);return;}
+    if(example_lvgl_lock(-1)){pearl_ui_scanning();example_lvgl_unlock();}
+    pearl_library next={0};int result=pearl_library_scan(&next,"/sdcard/music");
+    if(!result){if(pearl_library_lock()){pearl_library old=music;music=next;pearl_library_free(&old);pearl_library_unlock();}else{pearl_library_free(&next);result=-3;}}
+    pearl_audio_attach(&music);
+    if(example_lvgl_lock(-1)){pearl_ui_ready(&music,result?"Scan failed. Previous library kept; check card or free memory.":"");example_lvgl_unlock();}
+    ESP_LOGW("pearl","Rescan result=%d albums=%u tracks=%u",result,music.album_count,music.track_count);
+    rescan_running=false;vTaskDelete(NULL);
+}
+void pearl_library_rescan(void){if(atomic_exchange(&rescan_running,true))return;if(xTaskCreate(rescan_task,"rescan",8192,NULL,2,&rescan_task_handle)!=pdPASS)rescan_running=false;}
 static void buttons_task(void *arg)
 {
     const int up=CONFIG_PEARL_BUTTON_UP,down=CONFIG_PEARL_BUTTON_DOWN;

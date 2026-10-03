@@ -3,13 +3,14 @@
 #include <stdint.h>
 #define PEARL_PATH 512
 #define PEARL_NAME 160
-#define PEARL_MAX_TRACKS 2048
-#define PEARL_MAX_ALBUMS 256
 #define PEARL_ART_SIZE 240
 
-typedef struct { char path[PEARL_PATH], title[PEARL_NAME]; unsigned album; } pearl_track;
-typedef struct { char path[PEARL_PATH], title[PEARL_NAME], art[PEARL_PATH]; unsigned first, count; } pearl_album;
-typedef struct { pearl_track *tracks; pearl_album *albums; unsigned track_count,album_count; bool truncated; } pearl_library;
+typedef struct {char *path,*title,*artist;unsigned album,track_number,disc_number;} pearl_track;
+typedef struct {char *path,*title,*artist,*art;unsigned first,count;} pearl_album;
+typedef enum {PEARL_ALBUMS,PEARL_ARTISTS,PEARL_FOLDERS,PEARL_PLAYLISTS} pearl_view;
+typedef struct {char *title,*path;unsigned *tracks,count,capacity;pearl_view kind;} pearl_collection;
+typedef struct {pearl_track *tracks;pearl_album *albums;pearl_collection *collections;unsigned track_count,album_count,collection_count,track_capacity,album_capacity,collection_capacity,skipped;bool truncated;} pearl_library;
+int pearl_collection_step(const pearl_library *lib,int collection,int position,int direction);
 int pearl_library_scan(pearl_library *lib,const char *root);
 void pearl_library_free(pearl_library *lib);
 int pearl_next(const pearl_library *lib,int current,int direction);
@@ -22,6 +23,13 @@ pearl_button_event pearl_button_update(pearl_button *b,bool pressed,uint32_t now
 typedef struct { int track,volume; bool paused,ready; uint32_t seconds; char error[120]; } pearl_state;
 void pearl_audio_start(pearl_library *lib);
 void pearl_audio_play(int track);
+void pearl_audio_play_collection(int collection,int position);
+void pearl_library_rescan(void);
+bool pearl_library_lock(void);
+void pearl_library_unlock(void);
+void pearl_ui_scanning(void);
+bool pearl_audio_detach(void);
+void pearl_audio_attach(pearl_library *lib);
 void pearl_audio_toggle(void);
 void pearl_audio_step(int delta);
 void pearl_audio_volume(int delta);

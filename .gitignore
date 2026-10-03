@@ -6,3 +6,5 @@ backups/
 .venv/
 __pycache__/
 .DS_Store
+
+.flash-venv/

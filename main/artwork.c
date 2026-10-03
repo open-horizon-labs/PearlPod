@@ -1,5 +1,6 @@
 #include "artwork.h"
 #include "player.h"
+#include "metadata.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
 #define STBI_ONLY_PNG
@@ -18,6 +19,7 @@ uint8_t *pearl_art_payload(const char *path,size_t *size){
  *size=0;FILE *f=fopen(path,"rb");if(!f)return NULL;uint8_t *result=NULL;uint8_t h[10];
  const char *ext=strrchr(path,'.');
  if(ext&&(!strcasecmp(ext,".jpg")||!strcasecmp(ext,".jpeg")||!strcasecmp(ext,".png"))){fseek(f,0,SEEK_END);long n=ftell(f);rewind(f);if(n>0)result=read_blob(f,n,size);goto end;}
+ if(ext&&!strcasecmp(ext,".flac"))pearl_audio_offset(f);
  if(fread(h,1,10,f)!=10)goto end;
  if(!memcmp(h,"ID3",3)&&(h[3]==3||h[3]==4)&&!(h[5]&0xc0)){
   uint8_t version=h[3];uint32_t remaining=sync32(h+6);
@@ -30,7 +32,7 @@ uint8_t *pearl_art_payload(const char *path,size_t *size){
    }else if(fseek(f,n,SEEK_CUR))break;
   }
  }else if(!memcmp(h,"fLaC",4)){
-  fseek(f,4,SEEK_SET);bool_last:;
+  long base=pearl_audio_offset(f);fseek(f,base+4,SEEK_SET);bool_last:;
   uint8_t block[4];if(fread(block,1,4,f)!=4)goto end;unsigned n=((unsigned)block[1]<<16)|(block[2]<<8)|block[3];
   if((block[0]&127)==6&&n<=ART_LIMIT){size_t got;uint8_t *blob=read_blob(f,n,&got);if(!blob)goto end;size_t p=4;
    if(p+4>got){free(blob);goto end;}uint32_t mime=be32(blob+p);p+=4;if(mime>got-p){free(blob);goto end;}p+=mime;
