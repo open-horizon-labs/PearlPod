@@ -695,8 +695,8 @@ static void buttons_task(void *arg)
         if(atomic_exchange(&wake_requested,false)){display_sleep(false,false);pearl_power_activity();}
         pearl_button_event u=pearl_button_update(&ub,!gpio_get_level(up),now),d=pearl_button_update(&db,!gpio_get_level(down),now);
         if(u!=BUTTON_NONE||d!=BUTTON_NONE){pearl_power_activity();if(screen_locked&&!screen_manual)display_sleep(false,false);}
-        if(u==BUTTON_SHORT){pearl_audio_volume(2);ESP_LOGW("pearl","Volume up GPIO%d",up);}
-        if(d==BUTTON_SHORT){pearl_audio_volume(-2);ESP_LOGW("pearl","Volume down GPIO%d",down);}
+        if(u==BUTTON_SHORT){pearl_audio_volume(-2);ESP_LOGW("pearl","Volume down GPIO%d",up);}
+        if(d==BUTTON_SHORT){pearl_audio_volume(2);ESP_LOGW("pearl","Volume up GPIO%d",down);}
         if(d==BUTTON_LONG){display_sleep(!screen_locked,!screen_locked);}
         if(u==BUTTON_LONG)enter_standby();
         pearl_state playback=pearl_audio_state();bool playing=playback.ready&&!playback.paused;
