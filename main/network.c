@@ -1,4 +1,6 @@
 #include "network.h"
+#include "captive_dns.h"
+#include "dhcpserver/dhcpserver.h"
 #include "cJSON.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_event.h"
@@ -61,6 +63,7 @@ extern const unsigned char portal_end[] asm("_binary_portal_html_end");
 #define E_SCAN 1u
 #define E_IP 2u
 #define E_DOWN 4u
+#define E_PORTAL_ACTIVITY 8u
 static void message(const char *s) {
   xSemaphoreTake(lock, portMAX_DELAY);
   snprintf(state.message, sizeof(state.message), "%s", s);
@@ -225,6 +228,7 @@ static bool save(profile p) {
   return true;
 }
 static esp_err_t page(httpd_req_t *r) {
+  atomic_fetch_or(&events, E_PORTAL_ACTIVITY);
   httpd_resp_set_type(r, "text/html; charset=utf-8");
   httpd_resp_set_hdr(r, "Cache-Control", "no-store");
   httpd_resp_set_hdr(r, "Content-Security-Policy",
@@ -233,7 +237,22 @@ static esp_err_t page(httpd_req_t *r) {
   return httpd_resp_send(r, (const char *)portal_start,
                          portal_end - portal_start);
 }
+/* Same probe behavior as roon-knob: iOS receives setup HTML; Android and
+ * unknown HTTP probe paths redirect to the captive root. */
+static esp_err_t captive_redirect(httpd_req_t *r, httpd_err_code_t error) {
+  (void)error;
+  if (!flag(0)) return httpd_resp_send_err(r,HTTPD_404_NOT_FOUND,"Not found");
+  atomic_fetch_or(&events,E_PORTAL_ACTIVITY);
+  httpd_resp_set_status(r,"302 Found");
+  httpd_resp_set_hdr(r,"Location","http://192.168.4.1/");
+  httpd_resp_set_hdr(r,"Cache-Control","no-store");
+  return httpd_resp_send(r,NULL,0);
+}
+static esp_err_t android_probe(httpd_req_t *r) {
+  return captive_redirect(r,HTTPD_404_NOT_FOUND);
+}
 static esp_err_t snapshot(httpd_req_t *r) {
+  atomic_fetch_or(&events, E_PORTAL_ACTIVITY);
   pearl_network_state s = pearl_network_snapshot();
   cJSON *o = cJSON_CreateObject(), *a = cJSON_CreateArray(),
         *saved = cJSON_CreateArray();
@@ -274,6 +293,7 @@ static esp_err_t snapshot(httpd_req_t *r) {
   return e;
 }
 static esp_err_t mutate(httpd_req_t *r) {
+  atomic_fetch_or(&events, E_PORTAL_ACTIVITY);
   command c = {.kind = SCAN};
   char body[256] = {0};
   if (r->content_len <= 0 || r->content_len >= (int)sizeof(body))
@@ -430,6 +450,7 @@ static bool initialize(void) {
   return true;
 }
 static void stop(void) {
+  pearl_captive_dns_stop();
   want_connect = false;
   select_after_scan = false;
   connect_deadline = retry_at = 0;
@@ -509,7 +530,9 @@ static __attribute__((noinline)) bool start(bool setup) {
   {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 8192;
-    cfg.max_uri_handlers = 5;
+    cfg.max_uri_handlers = 9;
+    cfg.lru_purge_enable = true;
+    cfg.max_open_sockets = setup ? 6 : 4; /* Reserve the captive DNS socket. */
     if (httpd_start(&server, &cfg) != ESP_OK) {
       stop();
       message("Setup could not start.");
@@ -520,15 +543,34 @@ static __attribute__((noinline)) bool start(bool setup) {
         {.uri = "/", .method = HTTP_GET, .handler = page},
         {.uri = "/state", .method = HTTP_GET, .handler = snapshot},
         {.uri = "/scan", .method = HTTP_POST, .handler = mutate},
-        {.uri = "/save", .method = HTTP_POST, .handler = mutate}};
-    for (unsigned i = 0; i < 5; i++)
+        {.uri = "/save", .method = HTTP_POST, .handler = mutate},
+        {.uri = "/hotspot-detect.html", .method = HTTP_GET, .handler = page},
+        {.uri = "/library/test/success.html", .method = HTTP_GET, .handler = page},
+        {.uri = "/generate_204", .method = HTTP_GET, .handler = android_probe},
+        {.uri = "/gen_204", .method = HTTP_GET, .handler = android_probe}};
+    for (unsigned i = 0; i < sizeof(routes)/sizeof(*routes); i++)
       if (httpd_register_uri_handler(server, &routes[i]) != ESP_OK) {
         stop();
         message("Diagnostic server unavailable.");
         return false;
       }
-    if (setup)
-      message("Setup ready. Join the network shown here.");
+    if (httpd_register_err_handler(server,HTTPD_404_NOT_FOUND,captive_redirect)!=ESP_OK) {
+      stop();message("Setup redirect unavailable. Try again.");return false;
+    }
+    if (setup) {
+      /* T-Dongle DHCP DNS advertisement, without its auth/session machinery. */
+      esp_netif_dhcps_stop(ap_netif);
+      esp_netif_dns_info_t dns = {.ip.type=IPADDR_TYPE_V4};
+      dns.ip.u_addr.ip4.addr=esp_ip4addr_aton("192.168.4.1");
+      dhcps_offer_t offer=OFFER_DNS;
+      bool configured=esp_netif_set_dns_info(ap_netif,ESP_NETIF_DNS_MAIN,&dns)==ESP_OK &&
+        esp_netif_dhcps_option(ap_netif,ESP_NETIF_OP_SET,ESP_NETIF_DOMAIN_NAME_SERVER,&offer,sizeof(offer))==ESP_OK;
+      esp_err_t dhcp=esp_netif_dhcps_start(ap_netif);
+      if (!configured || dhcp!=ESP_OK || !pearl_captive_dns_start()) {
+        stop();message("Captive setup unavailable. Try again.");return false;
+      }
+      message("Join the open network. WiFi setup opens on your phone.");
+    }
   }
   return true;
 }
@@ -665,8 +707,7 @@ static void worker(void *arg) {
         atomic_store(&shutting_down, false);
         xSemaphoreGive(off_done);
       } else if (c.kind == SETUP) {
-        if (start(true))
-          scan(false);
+        start(true); /* Scan after the setup page loads, keeping AP joins responsive. */
       } else if (c.kind == CONNECT) {
         if (!profile_count)
           message("No saved networks. Open WiFi setup first.");
@@ -707,6 +748,8 @@ static void worker(void *arg) {
     state.lease_seconds = remaining > 0 ? remaining / 1000000 : 0;
     xSemaphoreGive(lock);
     unsigned e = atomic_exchange(&events, 0);
+    if ((e & E_PORTAL_ACTIVITY) && flag(0))
+      lease_deadline=esp_timer_get_time()+CONFIG_PEARL_WIFI_SETUP_SEC*1000000LL;
     if (!started)
       continue;
     if (e & E_DOWN) {

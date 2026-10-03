@@ -13,3 +13,5 @@ Keep Markdown paragraphs and list items on one source line, without fixed-width 
 Recovery: `tools/recover.sh` polls for this player’s USB identity and makes up to twenty bounded flash attempts, stopping on success. It restores bundled device-verified c9e6efd, app-only, preserving NVS. A tight USB polling loop successfully recovered the WiFi stack-overflow boot loop; prefer this documented approach over assuming USB unplug resets a battery-powered device. Read docs/RECOVERY.md before giving hardware reset instructions.
 
 Home use: the setup AP is open. Setup, diagnostics, FTP and sync require no passwords, bearer/session tokens, login or pairing. Do not introduce device/service authentication unless the user requests it. The household router’s WiFi password and host-only Plex credential are upstream requirements, not PearlPod access controls.
+
+WiFi setup must retain the T-Dongle/roon-knob captive portal flow: DHCP DNS advertisement, captive DNS, phone probe handlers and deferred scanning. A manual URL is a fallback, not the primary setup flow.

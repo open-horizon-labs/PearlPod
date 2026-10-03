@@ -1,5 +1,6 @@
 #include "player.h"
 #include "network.h"
+#include "captive_dns.h"
 #include "sync.h"
 #include "power.h"
 #include "esp_timer.h"
@@ -28,6 +29,7 @@ static void run(const char *line){
  else if(!strcmp(line,"sync"))pearl_sync_start();
  else if(!strncmp(line,"sync source ",12))printf("PEARL sync source saved=%d\n",pearl_sync_source(line+12));
  else if(!strcmp(line,"sync status")){char msg[120];pearl_sync_status(msg,sizeof(msg));printf("PEARL sync %s\n",msg);}
+ else if(!strcmp(line,"wifi portal"))printf("PEARL captive active=%d dns_replies=%u\n",pearl_captive_dns_active(),pearl_captive_dns_replies());
  else if(!strcmp(line,"wifi setup"))pearl_network_setup();
  else if(!strcmp(line,"wifi scan"))pearl_network_scan();
  else if(!strcmp(line,"wifi connect"))pearl_network_connect();
