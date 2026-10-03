@@ -1,6 +1,6 @@
 # Solution Space
 
-The concrete source adapters, wire requests, card layout, resume/activation algorithm and revised dissent are in [PLAYLIST-EXPORT-SYNC-DESIGN.md](PLAYLIST-EXPORT-SYNC-DESIGN.md). That expansion makes Roon export freshness, manifest-aware scanning and FAT32 fault testing explicit.
+The concrete source adapters, wire requests, card layout, resume/activation algorithm and revised dissent are in [PLAYLIST-EXPORT-SYNC-DESIGN.md](PLAYLIST-EXPORT-SYNC-DESIGN.md). That expansion makes Roon export freshness, manifest-aware scanning and FAT32 fault testing explicit. [SYNC-REUSE-FACT-CHECK.md](SYNC-REUSE-FACT-CHECK.md) reopens the transport choice: existing ESP-IDF FTP reception plus host-side lftp mirroring merits evaluation before a custom HTTP client. The pull flow below remains a comparison proposal; the NAS-only Plex boundary is retained.
 
 ## Solution Space Analysis
 
