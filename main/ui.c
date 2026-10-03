@@ -163,7 +163,7 @@ static void render(void){
 }
 static void tick(lv_timer_t *timer){
     if(power_asleep){art_result r;while(xQueueReceive(art_results,&r,0)==pdTRUE)free(r.pixels);return;}
-    if(network_info){pearl_network_state n=pearl_network_snapshot();char info[400];if(n.setup)snprintf(info,sizeof(info),"%s\n\nNetwork: %s\nPassword: %s\nOpen http://192.168.4.1\n%s",n.message,n.ap_ssid,n.ap_password,n.scanning?"Finding networks...":"");else snprintf(info,sizeof(info),"%s%s%s",n.message,n.connected?"\nIP: ":"",n.connected?n.ip:"");lv_label_set_text(network_info,info);int height=n.setup?220:88;lv_obj_set_height(network_info,height);for(int i=0;i<3;i++)lv_obj_set_y(network_buttons[i],height+12+i*72);}
+    if(network_info){pearl_network_state n=pearl_network_snapshot();char info[400];if(n.setup)snprintf(info,sizeof(info),"%s\n\nNetwork: %s\nJoin without a password\nOpen http://192.168.4.1\n%s",n.message,n.ap_ssid,n.scanning?"Finding networks...":"");else snprintf(info,sizeof(info),"%s%s%s",n.message,n.connected?"\nIP: ":"",n.connected?n.ip:"");lv_label_set_text(network_info,info);int height=n.setup?220:88;lv_obj_set_height(network_info,height);for(int i=0;i<3;i++)lv_obj_set_y(network_buttons[i],height+12+i*72);}
     if(sync_info){char message[120];pearl_sync_status(message,sizeof(message));lv_label_set_text(sync_info,message);}
     if(!lib)return;
     pearl_state s=pearl_audio_state();if(page!=-6&&s.track!=lyric_track&&lyrics.text){pearl_lyrics_free(&lyrics);lyric_track=-1;}char text[160];snprintf(text,sizeof(text),"Vol %d",s.volume);lv_label_set_text(volume_label,text);

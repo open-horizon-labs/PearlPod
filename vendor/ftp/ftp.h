@@ -87,10 +87,7 @@ typedef enum {
     E_FTP_RESULT_FAILED
 } ftp_result_t;
 
-typedef struct {
-    bool            uservalid : 1;
-    bool            passvalid : 1;
-} ftp_loggin_t;
+
 
 typedef enum {
     E_FTP_NOTHING_OPEN = 0,
@@ -120,8 +117,6 @@ typedef struct {
     uint8_t         state;
     uint8_t         substate;
     uint8_t         txRetries;
-    uint8_t         logginRetries;
-    ftp_loggin_t    loggin;
     uint8_t         e_open;
     bool            closechild;
     bool            enabled;
@@ -160,13 +155,11 @@ typedef enum {
     E_FTP_CMD_QUIT,
     E_FTP_CMD_APPE,
     E_FTP_CMD_NLST,
-    E_FTP_CMD_AUTH,
     E_FTP_NUM_FTP_CMDS
 } ftp_cmd_index_t;
 
 
 
-#define FTP_USER_PASS_LEN_MAX	32
 #define FTP_DEF_USER            "micro"
 #define FTP_DEF_PASS            "python"
 #define FTP_MUTEX_TIMEOUT_MS    1000
@@ -197,8 +190,6 @@ typedef enum {
 
 #if 0
 extern const char *FTP_TAG;
-extern char ftp_user[FTP_USER_PASS_LEN_MAX + 1];
-extern char ftp_pass[FTP_USER_PASS_LEN_MAX + 1];
 extern uint32_t ftp_stack_size;
 extern QueueHandle_t ftp_mutex;
 extern int ftp_buff_size;

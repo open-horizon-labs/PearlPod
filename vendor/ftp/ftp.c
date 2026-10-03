@@ -76,8 +76,6 @@ const char *FTP_TAG = "[Ftp]";
 const char *MOUNT_POINT = "/sdcard/music/.pearl";
 
 static uint8_t ftp_stop = 0;
-char ftp_user[FTP_USER_PASS_LEN_MAX + 1];
-char ftp_pass[FTP_USER_PASS_LEN_MAX + 1];
 
 /******************************************************************************
  DECLARE PRIVATE DATA
@@ -93,7 +91,7 @@ static const ftp_cmd_t ftp_cmd_table[] = { { "FEAT" }, { "SYST" }, { "CDUP" }, {
 										   { "TYPE" }, { "USER" }, { "PASS" }, { "PASV" },
 										   { "LIST" }, { "RETR" }, { "STOR" }, { "DELE" },
 										   { "RMD"	}, { "MKD"	}, { "RNFR" }, { "RNTO" },
-										   { "NOOP" }, { "QUIT" }, { "APPE" }, { "NLST" }, { "AUTH" } };
+										   { "NOOP" }, { "QUIT" }, { "APPE" }, { "NLST" } };
 
 // ==== PRIVATE FUNCTIONS ===================================================
 
@@ -690,11 +688,6 @@ static void ftp_process_cmd (void) {
 		ftp_cmd_buffer[len] = '\0';
 		// bufptr is moved as commands are being popped
 		ftp_cmd_index_t cmd = ftp_pop_command(&bufptr);
-		if (false &&
-				((cmd != E_FTP_CMD_USER) && (cmd != E_FTP_CMD_PASS) && (cmd != E_FTP_CMD_QUIT) && (cmd != E_FTP_CMD_FEAT) && (cmd != E_FTP_CMD_AUTH))) {
-			ftp_send_reply(332, NULL);
-			return;
-		}
 		if ((cmd >= 0) && (cmd < E_FTP_NUM_FTP_CMDS)) {
 			ESP_LOGI(FTP_TAG, "CMD: %s", ftp_cmd_table[cmd].cmd);
 		}
@@ -712,9 +705,6 @@ static void ftp_process_cmd (void) {
 		switch (cmd) {
 		case E_FTP_CMD_FEAT:
 			ftp_send_reply(502, "no-features");
-			break;
-		case E_FTP_CMD_AUTH:
-			ftp_send_reply(504, "not-supported");
 			break;
 		case E_FTP_CMD_SYST:
 			ftp_send_reply(215, "UNIX Type: L8");
@@ -773,7 +763,7 @@ static void ftp_process_cmd (void) {
 				}
 				else strcpy(lpath,ftp_path);
 #endif
-				strcpy(lpath,ftp_path);
+				snprintf(lpath,sizeof(lpath),"\"%s\"",ftp_path);
 
 				ftp_send_reply(257, lpath);
 			}
@@ -1105,10 +1095,7 @@ int ftp_run (uint32_t elapsed)
 			if (ftp_data.c_sd < 0 && ftp_data.substate == E_FTP_STE_SUB_DISCONNECTED) {
 				if (E_FTP_RESULT_OK == ftp_wait_for_connection(ftp_data.lc_sd, &ftp_data.c_sd, &ftp_data.ip_addr)) {
 					ftp_data.txRetries = 0;
-					ftp_data.logginRetries = 0;
 					ftp_data.ctimeout = 0;
-					ftp_data.loggin.uservalid = false;
-					ftp_data.loggin.passvalid = false;
 					strcpy (ftp_path, "/");
 					ESP_LOGI(FTP_TAG, "Connected.");
 					//ftp_send_reply (220, "Micropython FTP Server");

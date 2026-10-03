@@ -55,7 +55,6 @@ static bool initialized, initialization_attempted, started, want_connect,
 static atomic_uint events;
 static int64_t retry_at, connect_deadline;
 static httpd_handle_t server;
-static char token[33];
 static esp_netif_t *ap_netif;
 extern const unsigned char portal_start[] asm("_binary_portal_html_start");
 extern const unsigned char portal_end[] asm("_binary_portal_html_end");
@@ -225,25 +224,7 @@ static bool save(profile p) {
   selected = index;
   return true;
 }
-/* Restrict the provisioning server to requests addressed to the setup AP,
- * even while AP+STA is connected to a household network. */
-static bool local(httpd_req_t *r) {
-  struct sockaddr_in address;
-  socklen_t length = sizeof(address);
-  esp_netif_ip_info_t ip;
-  return ap_netif &&
-         getsockname(httpd_req_to_sockfd(r), (struct sockaddr *)&address,
-                     &length) == 0 &&
-         address.sin_family == AF_INET &&
-         esp_netif_get_ip_info(ap_netif, &ip) == ESP_OK &&
-         address.sin_addr.s_addr == ip.ip.addr;
-}
-static esp_err_t deny(httpd_req_t *r) {
-  return httpd_resp_send_err(r, HTTPD_403_FORBIDDEN, "Setup AP only");
-}
 static esp_err_t page(httpd_req_t *r) {
-  if (!local(r))
-    return deny(r);
   httpd_resp_set_type(r, "text/html; charset=utf-8");
   httpd_resp_set_hdr(r, "Cache-Control", "no-store");
   httpd_resp_set_hdr(r, "Content-Security-Policy",
@@ -253,8 +234,6 @@ static esp_err_t page(httpd_req_t *r) {
                          portal_end - portal_start);
 }
 static esp_err_t snapshot(httpd_req_t *r) {
-  if (!local(r))
-    return deny(r);
   pearl_network_state s = pearl_network_snapshot();
   cJSON *o = cJSON_CreateObject(), *a = cJSON_CreateArray(),
         *saved = cJSON_CreateArray();
@@ -265,7 +244,6 @@ static esp_err_t snapshot(httpd_req_t *r) {
     return httpd_resp_send_err(r, HTTPD_500_INTERNAL_SERVER_ERROR,
                                "Out of memory");
   }
-  cJSON_AddStringToObject(o, "token", token);
   cJSON_AddStringToObject(o, "message", s.message);
   cJSON_AddStringToObject(o, "ip", s.ip);
   cJSON_AddBoolToObject(o, "scanning", s.scanning);
@@ -296,13 +274,6 @@ static esp_err_t snapshot(httpd_req_t *r) {
   return e;
 }
 static esp_err_t mutate(httpd_req_t *r) {
-  char supplied[40];
-  if (!local(r))
-    return deny(r);
-  if (httpd_req_get_hdr_value_str(r, "X-Listener-Token", supplied,
-                                  sizeof(supplied)) != ESP_OK ||
-      strcmp(supplied, token))
-    return httpd_resp_send_err(r, HTTPD_403_FORBIDDEN, "Reopen setup page");
   command c = {.kind = SCAN};
   char body[256] = {0};
   if (r->content_len <= 0 || r->content_len >= (int)sizeof(body))
@@ -345,7 +316,7 @@ static esp_err_t mutate(httpd_req_t *r) {
   httpd_resp_set_status(r, "202 Accepted");
   return httpd_resp_sendstr(r, "Queued");
 }
-/* Read-only bounded diagnostics. Provisioning routes remain AP-only. */
+/* Bounded diagnostics and setup are available while WiFi is running. */
 static esp_err_t diagnostics(httpd_req_t *r) {
   if (!flag(0) && !flag(1)) {
     httpd_resp_set_status(r, "503 Service Unavailable");
@@ -480,7 +451,6 @@ static void stop(void) {
   initialization_attempted = false;
   lease_deadline = 0;
   atomic_store(&events, 0);
-  memset(token, 0, sizeof(token));
   xSemaphoreTake(lock, portMAX_DELAY);
   state = (pearl_network_state){.message = "WiFi is off"};
   xSemaphoreGive(lock);
@@ -509,27 +479,17 @@ static __attribute__((noinline)) bool start(bool setup) {
     esp_fill_random(random, sizeof(random));
     snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "PearlPod-%02X%02X",
              random[0], random[1]);
-    for (unsigned i = 0; i < 8; i++)
-      snprintf((char *)ap.ap.password + i * 2, 3, "%02x", random[i]);
     ap.ap.ssid_len = strlen((char *)ap.ap.ssid);
     ap.ap.channel = 1;
     ap.ap.max_connection = 2;
-    ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
+    ap.ap.authmode = WIFI_AUTH_OPEN;
     if (esp_wifi_set_config(WIFI_IF_AP, &ap) != ESP_OK) {
       stop();
       message("Setup configuration failed. Try again.");
       return false;
     }
-    esp_fill_random(random, sizeof(random));
-    for (unsigned i = 0; i < 8; i++)
-      snprintf(token + i * 2, 3, "%02x", random[i]);
-    esp_fill_random(random, sizeof(random));
-    for (unsigned i = 0; i < 8; i++)
-      snprintf(token + 16 + i * 2, 3, "%02x", random[i]);
     xSemaphoreTake(lock, portMAX_DELAY);
     snprintf(state.ap_ssid, sizeof(state.ap_ssid), "%.32s", ap.ap.ssid);
-    snprintf(state.ap_password, sizeof(state.ap_password), "%.16s",
-             ap.ap.password);
     xSemaphoreGive(lock);
   }
   if (esp_wifi_start() != ESP_OK) {

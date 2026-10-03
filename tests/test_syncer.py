@@ -92,7 +92,8 @@ class SyncTests(unittest.TestCase):
                 report_failure(ip,2121,'card_full')
                 self.assertEqual((pod/'error.txt').read_text(),'card_full\n')
                 self.assertEqual((pod/'objects'/name).stat().st_mtime_ns,old)
-                ftp=ftplib.FTP();ftp.connect(ip,2121,timeout=5);ftp.login()
+                ftp=ftplib.FTP();ftp.connect(ip,2121,timeout=5)
+                self.assertEqual(ftp.pwd(),'/')  # No login/password handshake required
                 with self.assertRaises(ftplib.error_perm):ftp.cwd('../../')
                 ftp.quit()
             finally:

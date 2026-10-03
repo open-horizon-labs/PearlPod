@@ -23,7 +23,7 @@ tdongle-tailnet-firmware at ce0e1725fec8ebcf261b2969b2674aa710866b58: `alternati
 
 The best case for an AP is familiar password entry without boot cost. The functional failure would be reconnect attempts preventing scans; the adoption failure would be exposing setup with an obscure USB command; the opportunity cost would be implementing sync before the music-management workflow is decided. These concerns led to a touch-accessible WiFi page, a command worker and reconnect pause, and the explicit removal of sync from this phase.
 
-A setup server in AP+STA mode also listens on the station interface unless restricted. Requests are accepted only when addressed to the AP interface, mutations require a runtime session token, and the AP requires a random WPA2 password shown on the device. Neither stored passwords nor AP passwords appear in diagnostic output. The server stops with WiFi off. Credential storage is ordinary NVS, not encrypted against physical extraction; physical resistance is outside this personal-device setup scope.
+This is a home device. The temporary setup AP is open, setup/status pages work on both AP and home LAN interfaces, and scan/save requests require no token, login or pairing. AP-interface access checks and generated session-token checks were removed at the user’s request. Join it without a password; the player shows its network name and setup URL. Stored household WiFi passwords do not appear in diagnostic output. The server stops with WiFi off. Credential storage is ordinary NVS, not encrypted against physical extraction; physical resistance is outside this personal-device setup scope.
 
 ## Execution checklist and risk retirement
 

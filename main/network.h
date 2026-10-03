@@ -11,7 +11,7 @@ typedef struct {
   bool enabled, setup, connected, scanning;
   unsigned retries, disconnect_reason, lease_seconds;
   unsigned count;
-  char message[120], ip[16], ap_ssid[33], ap_password[17];
+  char message[120], ip[16], ap_ssid[33];
   pearl_wifi_ap aps[PEARL_WIFI_SCAN_LIMIT];
 } pearl_network_state;
 #ifdef PEARL_UI_HOST
