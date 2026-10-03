@@ -1,4 +1,4 @@
-# Listener Player
+# PearlPod
 
 Offline anime-themed music firmware for Listener’s CS43131 FakePod Nano. The installed player supports MP3, FLAC and WAV, nested microSD albums, touchscreen playback, artwork and physical volume controls. WiFi is deferred.
 
