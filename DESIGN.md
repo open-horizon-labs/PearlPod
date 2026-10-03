@@ -1,5 +1,5 @@
 ---
-name: Listener Player
+name: PearlPod
 description: Listener's personal anime-inspired offline music companion
 colors:
   night-navy: "#101827"
@@ -7,6 +7,8 @@ colors:
   sunshine-yellow: "#ffd75e"
   mint-teal: "#56ddc5"
   list-surface: "#1d2c40"
+  row-pressed: "#294555"
+  selected-track: "#284b50"
 typography:
   heading:
     fontFamily: Montserrat
@@ -32,34 +34,46 @@ components:
     backgroundColor: "{colors.sunshine-yellow}"
     textColor: "{colors.night-navy}"
     rounded: "{rounded.action}"
-    height: "54px"
+    height: "64px"
   list-row:
     backgroundColor: "{colors.list-surface}"
     textColor: "{colors.warm-cream}"
     rounded: "{rounded.row}"
-    height: "64px"
+    height: "92px"
     width: "424px"
   footer-route:
     backgroundColor: "{colors.sunshine-yellow}"
     textColor: "{colors.night-navy}"
     rounded: "{rounded.action}"
-    height: "36px"
-    width: "78px"
+    height: "64px"
+    width: "204px"
+  track-row:
+    backgroundColor: "{colors.list-surface}"
+    textColor: "{colors.warm-cream}"
+    rounded: "{rounded.row}"
+    height: "72px"
+    width: "424px"
+  play-pause:
+    backgroundColor: "{colors.sunshine-yellow}"
+    textColor: "{colors.night-navy}"
+    rounded: "{rounded.action}"
+    height: "76px"
+    width: "168px"
 ---
 
-# Design System: Listener Player
+# Design System: PearlPod
 
 ## Overview
 
 The embedded Operate surface is a personal anime music companion for Listener. Sample soundtrack and Sample collection are the user's confirmed imagery references. The current interface places expressive personal artwork within a quiet, readable listening surface.
 
-This is an extraction from `main/ui.c`, rather than a screenshot audit or broad design review. The user confirmed rendering, button volume, audio playback, and a long-hold power cycle on the physical device. The previous brief is refreshed here under the current documentation task; aspirational behaviors are distinguished from implemented ones.
+This documents the current LVGL implementation in `main/ui.c`. Earlier physical checks confirmed rendering, audio, volume, and sleep/wake; physical touch accuracy and swipe behavior for this refinement remain pending. Source geometry and host rendering do not establish hardware gesture accuracy.
 
 **Key Characteristics:**
 
-- Album art is the center of the listening screen.
-- Warm, bright actions stand apart from dark album rows.
-- Persistent Albums and Playing routes connect browsing and listening.
+- Recognizable album thumbnails lead browsing; large cover art leads listening.
+- Generous touch controls prioritize play/pause and keep navigation predictable.
+- Personal anime imagery provides fallback art while real covers load asynchronously.
 
 ## Colors
 
@@ -67,13 +81,13 @@ Sunshine yellow marks touch actions and status messages; mint teal supports row 
 
 ## Typography
 
-LVGL's built-in Montserrat fonts provide a consistent hierarchy: heading at 28 px, current track and empty-state title at 24 px, row titles and action labels at 20 px, and supporting album names, track counts, volume, and status at 16 px. Long headings and music names use ellipsis. There is no custom typeface or additional weight system in the implementation.
+LVGL's built-in Montserrat hierarchy uses heading at 28 px, current track at 24 px, row titles and action labels at 20 px, and supporting labels at 16 px. Browse titles ellipsize. Now Playing scrolls long track and album titles horizontally at different controlled speeds so their full identity remains available. The central play/pause symbol uses the heading size.
 
 ## Layout
 
-The fixed 460×460 screen has 18 px horizontal insets and a 424 px content width. Heading begins at y=12; the vertically scrolling body begins at y=54 and is 302 px high. Album and track rows are 64 px high on a 72 px rhythm. Album tracks are paged in groups of 32, with Previous and Next page actions when required.
+The fixed 460×460 screen uses 18 px horizontal insets and 424 px content width. Browse content begins at y=60 and is 304 px high. Album rows are 92 px high on a 100 px rhythm, with 64×64 thumbnails. Track rows are 72 px high on an 80 px rhythm beneath a 64 px Play album action. Album pages contain up to eight albums; track pages contain up to 32 tracks. Persistent header arrows handle page boundaries and disable unavailable directions. Footer routes are 204×64 with a 16 px gap.
 
-Now Playing centers 240×240 artwork, with the track title and album name below. Transport occupies y=360 with 54 px actions. Volume and the persistent Albums/Playing routes occupy y=420; these footer routes are only 36 px high, so a blanket 54 px minimum touch-target claim would be inaccurate. There are no responsive breakpoints.
+Now Playing centers 240×240 artwork above scrolling track and album labels. Transport at y=378 contains a central 168×76 play/pause target between 112×68 previous/next targets. Elapsed time sits beside the album label; volume sits in the header. Errors occupy a separate narrow band above transport. Back and page controls are 64×52. There are no responsive breakpoints.
 
 ## Elevation & Depth
 
@@ -85,21 +99,19 @@ Action buttons have softly curved 14 px corners; list rows use 12 px corners. Ar
 
 ## Components
 
-**Actions:** Sunshine-yellow buttons with centered navy Montserrat labels. Play album spans the body; transport provides previous, play/pause, and next. The implementation registers click events and does not define custom hover, focus, or pressed styling.
+**Actions:** Yellow controls turn teal when pressed. Play/pause has the largest target, and its resting color becomes teal during active playback. The heading explicitly distinguishes Paused, Now playing, and Your music states. Rows use a brighter dark surface when pressed; the selected track has a distinct tonal surface and a text label.
 
-**Album and track rows:** Full-width dark surfaces with an ellipsized title, teal subtitle, and a click target across the row. Albums show track counts; tracks say “Tap to play.”
+**Browsing:** Albums pair thumbnails with music names, counts, and a selected-album label when relevant. Tracks show sequence numbers and identify the selected track. Vertical dragging explores each page. Album browsing supports left/right swipes for pages; on a track page, left advances pages and right returns to albums. Explicit page arrows and Back remain available. Now Playing also supports a right swipe to albums. Gesture handling consumes the touch release to avoid selecting a track after a swipe. Album page scroll positions and each album's track position are saved during navigation.
 
-**Navigation:** Albums and Playing persist at the footer. Albums is the return route; a separate Back control is not implemented. Album pages add Play album and, where necessary, track-page controls.
+**Artwork:** Only visible album rows request thumbnails. Decoding runs asynchronously; generation tokens discard stale results after navigation. Personal anime artwork remains visible when covers are absent or fail to decode. Now Playing requests the album cover or embedded artwork from the selected track. The same illustration greets Listener during the quick startup scan.
 
-**Artwork:** The personal welcome illustration appears while scanning the card and as the Now Playing fallback. Album artwork loads asynchronously and replaces the fallback when ready. The empty album list is currently text-only; no mascot reactions or decorative animations are implemented.
-
-**Playback status:** Now Playing shows elapsed time and toggles the play/pause symbol. Footer volume updates from audio state. Error strings appear in yellow; explicit retry buttons are not implemented. Status shares vertical space with transport, so error visibility during playback needs physical review.
+**Navigation and feedback:** Browse footers offer Albums and Playing, with Albums selected in teal on the collection view. Now Playing replaces those routes with larger transport and a header Back button. Short browse hints invite exploration or explain the return gesture; errors replace hints. Empty-state copy explains how to add albums. No seek bar, decorative animation, custom focus treatment, or in-device settings surface is implemented.
 
 ## Do's and Don'ts
 
-- **Do** keep album artwork and readable controls central to Listener's anime-inspired player.
-- **Do** preserve immediate navigation while artwork loads in the background.
-- **Do** distinguish observed implementation from planned accessibility and recovery improvements.
-- **Don't** make decorative imagery a timed startup gate.
-- **Don't** claim every touch target is at least 54 px or that a separate Back button exists.
-- **Don't** introduce Wi-Fi requirements into everyday offline listening.
+- **Do** preserve the navy, cream, yellow, and teal identity and let album artwork carry personality.
+- **Do** keep tap alternatives for gestures and prioritize play/pause over secondary transport.
+- **Do** preserve browsing position while covers load asynchronously.
+- **Don't** introduce a timed decorative startup gate or Wi-Fi requirement for listening.
+- **Don't** claim physical swipe accuracy from source inspection or host renders.
+- **Don't** add decorative motion that competes with music names or controls.

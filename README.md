@@ -4,7 +4,7 @@ Offline anime-themed music firmware for Listener’s CS43131 FakePod Nano. The i
 
 ## Everyday controls
 
-Tap Albums, choose a directory, then tap a track. Playing shows the current track and artwork; use previous, pause/play and next on screen. Larger albums have page controls. Previous/next stay within the selected album.
+Tap Albums, choose a directory, then tap a track. Playing shows the current track and artwork; use previous, pause/play and next on screen. Browse albums by their cover thumbnails; swipe vertically to scroll. Swipe left for the next album or track page, and right from tracks or Now Playing to return to albums. Previous/next page buttons remain available in the header. Larger albums have page controls. Your place is remembered when you return. Previous/next stay within the selected album.
 
 Short press volume-up or volume-down to change volume. Hold volume-up for about two seconds to stop playback and sleep; release, then hold again to wake. Hold volume-down to turn the display off/on while music continues. Both holds darken the screen, but only volume-up sleeps playback. Sleep uses ESP32 light sleep rather than cutting battery power; standby draw is not measured.
 
@@ -41,3 +41,5 @@ python -m esptool --chip esp32s3 --port /dev/cu.usbmodemDEVICE write_flash 0 bac
 ```
 
 See [hardware evidence](docs/HARDWARE.md), [verification](docs/VERIFICATION.md) and [design](DESIGN.md). Published upstream source was a display/touch demo; this repository implements the player and preserves the original demo under `docs/`.
+
+For local UI verification after IDF has fetched managed components, run `tools/render_ui.sh /tmp/pearl-ui-check`. It builds the actual LVGL screen, exercises pointer gestures and produces 460×460 PNG captures. Checked-in previews under `docs/ui/after` use fixture album/track names.

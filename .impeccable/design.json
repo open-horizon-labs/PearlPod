@@ -1,49 +1,54 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-03T00:00:00-04:00",
-  "title": "Design System: Listener Player",
+  "generatedAt": "2026-10-03",
+  "title": "Design System: PearlPod",
   "extensions": {
     "shadows": [],
-    "motion": [],
+    "motion": [
+      {
+        "name": "Long music title",
+        "description": "LVGL circular scrolling for Now Playing track and album names at 28 and 24 animation speed respectively; no decorative animation."
+      }
+    ],
     "breakpoints": []
   },
   "components": [
     {
       "name": "Action",
       "kind": "button",
-      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or interaction simulation.",
+      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or gesture simulation.",
       "html": "<div class=\"ds-preview\">Play album</div>",
-      "css": ".ds-preview { background:#ffd75e; color:#101827; width:180px; height:54px; border-radius:14px; display:flex; align-items:center; justify-content:center; font:20px Montserrat,sans-serif; }",
+      "css": ".ds-preview { background:#ffd75e; color:#101827; width:180px; height:64px; border-radius:14px; display:flex; align-items:center; justify-content:center; font:20px Montserrat,sans-serif; }",
       "refersTo": "action"
     },
     {
       "name": "List row",
       "kind": "button",
-      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or interaction simulation.",
+      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or gesture simulation.",
       "html": "<div class=\"ds-preview\">Favorite album</div>",
-      "css": ".ds-preview { background:#1d2c40; color:#fff6dc; width:424px; height:64px; border-radius:12px; display:flex; align-items:center; justify-content:center; font:20px Montserrat,sans-serif; }",
+      "css": ".ds-preview { background:#1d2c40; color:#fff6dc; width:424px; height:92px; border-radius:12px; display:flex; align-items:center; justify-content:center; font:20px Montserrat,sans-serif; }",
       "refersTo": "list-row"
     },
     {
       "name": "Footer route",
       "kind": "button",
-      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or interaction simulation.",
+      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or gesture simulation.",
       "html": "<div class=\"ds-preview\">Albums</div>",
-      "css": ".ds-preview { background:#ffd75e; color:#101827; width:78px; height:36px; border-radius:14px; display:flex; align-items:center; justify-content:center; font:20px Montserrat,sans-serif; }",
+      "css": ".ds-preview { background:#ffd75e; color:#101827; width:204px; height:64px; border-radius:14px; display:flex; align-items:center; justify-content:center; font:20px Montserrat,sans-serif; }",
       "refersTo": "footer-route"
     },
     {
       "name": "Transport",
       "kind": "button",
-      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or interaction simulation.",
+      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or gesture simulation.",
       "html": "<div class=\"ds-preview\">\u25b6</div>",
-      "css": ".ds-preview { background:#ffd75e; color:#101827; width:74px; height:54px; border-radius:14px; display:flex; align-items:center; justify-content:center; font:20px Montserrat,sans-serif; }",
-      "refersTo": "action"
+      "css": ".ds-preview { background:#ffd75e; color:#101827; width:168px; height:76px; border-radius:14px; display:flex; align-items:center; justify-content:center; font:28px Montserrat,sans-serif; }",
+      "refersTo": "play-pause"
     },
     {
       "name": "Artwork fallback",
       "kind": "card",
-      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or interaction simulation.",
+      "description": "Static browser approximation of the embedded LVGL component; not a device screenshot or gesture simulation.",
       "html": "<div class=\"ds-preview\">Personal illustration</div>",
       "css": ".ds-preview { background:#101827; color:#fff6dc; width:240px; height:240px; border-radius:0px; display:flex; align-items:center; justify-content:center; font:20px Montserrat,sans-serif; }"
     }
@@ -51,20 +56,20 @@
   "narrative": {
     "overview": "The embedded Operate surface is a personal anime music companion for Listener. Sample soundtrack and Sample collection are the user's confirmed imagery references. The current interface places expressive personal artwork within a quiet, readable listening surface.",
     "keyCharacteristics": [
-      "Album art is the center of the listening screen.",
-      "Warm, bright actions stand apart from dark album rows.",
-      "Persistent Albums and Playing routes connect browsing and listening."
+      "Recognizable album thumbnails lead browsing; large cover art leads listening.",
+      "Generous touch controls prioritize play/pause and keep navigation predictable.",
+      "Personal anime imagery provides fallback art while real covers load asynchronously."
     ],
     "rules": [],
     "dos": [
-      "Do keep album artwork and readable controls central to Listener's anime-inspired player.",
-      "Do preserve immediate navigation while artwork loads in the background.",
-      "Do distinguish observed implementation from planned accessibility and recovery improvements."
+      "Do preserve the navy, cream, yellow, and teal identity and let album artwork carry personality.",
+      "Do keep tap alternatives for gestures and prioritize play/pause over secondary transport.",
+      "Do preserve browsing position while covers load asynchronously."
     ],
     "donts": [
-      "Don't make decorative imagery a timed startup gate.",
-      "Don't claim every touch target is at least 54 px or that a separate Back button exists.",
-      "Don't introduce Wi-Fi requirements into everyday offline listening."
+      "Don't introduce a timed decorative startup gate or Wi-Fi requirement for listening.",
+      "Don't claim physical swipe accuracy from source inspection or host renders.",
+      "Don't add decorative motion that competes with music names or controls."
     ]
   }
 }

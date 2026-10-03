@@ -1,0 +1,27 @@
+#include <assert.h>
+#include "../../main/ui.c"
+static pearl_state state={.ready=true,.track=0,.volume=30,.seconds=83};
+pearl_state pearl_audio_state(void){return state;}
+void pearl_audio_play(int n){state.track=n;state.paused=false;}
+void pearl_audio_toggle(void){state.paused=!state.paused;}
+void pearl_audio_step(int d){state.track=pearl_next(lib,state.track,d);}
+static uint8_t framebuffer[460*460*3];
+static void flush(lv_disp_drv_t *d,const lv_area_t *a,lv_color_t *pixels){for(int y=a->y1;y<=a->y2;y++)for(int x=a->x1;x<=a->x2;x++){lv_color32_t c={.full=lv_color_to32(*pixels++)};if(x>=0&&x<460&&y>=0&&y<460){size_t i=(y*460+x)*3;framebuffer[i]=c.ch.red;framebuffer[i+1]=c.ch.green;framebuffer[i+2]=c.ch.blue;}}lv_disp_flush_ready(d);}
+static void work(void){tick(NULL);art_request request;while(xQueueReceive(art_requests,&request,0)){art_result result={load_art(&request),request.generation,request.slot};assert(xQueueSend(art_results,&result,0));}tick(NULL);}
+static lv_indev_data_t touch;
+static void read_touch(lv_indev_drv_t *drv,lv_indev_data_t *data){*data=touch;}
+static void frame(int x,int y,bool pressed){touch.point.x=x;touch.point.y=y;touch.state=pressed?LV_INDEV_STATE_PR:LV_INDEV_STATE_REL;lv_tick_inc(40);lv_timer_handler();}
+static void tap(int x,int y){frame(x,y,true);frame(x,y,false);frame(x,y,false);}
+static void swipe(int x1,int y1,int x2,int y2){frame(x1,y1,true);for(int i=1;i<=5;i++)frame(x1+(x2-x1)*i/5,y1+(y2-y1)*i/5,true);frame(x2,y2,false);frame(x2,y2,false);}
+static void capture(const char *path){work();lv_refr_now(NULL);FILE *f=fopen(path,"wb");assert(f);fprintf(f,"P6\n460 460\n255\n");fwrite(framebuffer,1,sizeof(framebuffer),f);fclose(f);}
+int main(int argc,char **argv){assert(argc==2);lv_init();static lv_color_t draw[460*80];static lv_disp_draw_buf_t buf;lv_disp_draw_buf_init(&buf,draw,NULL,460*80);static lv_disp_drv_t drv;lv_disp_drv_init(&drv);drv.hor_res=drv.ver_res=460;drv.draw_buf=&buf;drv.flush_cb=flush;lv_disp_drv_register(&drv);static lv_indev_drv_t input;lv_indev_drv_init(&input);input.type=LV_INDEV_TYPE_POINTER;input.read_cb=read_touch;lv_indev_drv_register(&input);
+ static pearl_album albums[3];static pearl_track tracks[70];static pearl_library library={.albums=albums,.tracks=tracks,.album_count=3,.track_count=70};
+ const char *names[]={"Hero training mix","After-school adventures","Quiet night soundtracks"};for(int i=0;i<3;i++){strcpy(albums[i].title,names[i]);if(!i)strcpy(albums[i].art,"assets/pearl-welcome.png");albums[i].first=i?68+i-1:0;albums[i].count=i?1:68;}
+ for(int i=0;i<70;i++){snprintf(tracks[i].title,sizeof(tracks[i].title),"%02d  %s",i+1,i?"A song for the way home":"You Say Run - Sample soundtrack");tracks[i].album=i<68?0:i-67;}
+ pearl_ui_start();pearl_ui_ready(&library,"");char path[512];snprintf(path,sizeof(path),"%s/browse.ppm",argv[1]);capture(path);page=0;render();snprintf(path,sizeof(path),"%s/tracks.ppm",argv[1]);capture(path);page=-3;render();snprintf(path,sizeof(path),"%s/playing.ppm",argv[1]);capture(path);
+ state.paused=true;snprintf(path,sizeof(path),"%s/paused.ppm",argv[1]);capture(path);
+ strcpy(state.error,"Cannot play this file. Choose another track.");snprintf(path,sizeof(path),"%s/error.ppm",argv[1]);capture(path);state.error[0]=0;
+ unsigned prior_generation=art_generation;state.track=1;tick(NULL);assert(art_generation!=prior_generation);uint8_t *stale=malloc(PEARL_ART_SIZE*PEARL_ART_SIZE*2);art_result old={stale,prior_generation,-1};assert(xQueueSend(art_results,&old,0));tick(NULL);assert(!art_pixels);state.track=0;tick(NULL);
+ page=-1;render();lv_obj_update_layout(lv_scr_act());tap(180,100);assert(page==0);int selected=state.track;swipe(330,190,90,190);assert(page==0&&track_offset==32&&state.track==selected);swipe(90,190,330,190);assert(page==-1&&state.track==selected);
+ page=0;track_offset=0;render();lv_obj_update_layout(lv_scr_act());swipe(200,300,200,120);assert(page==0&&state.track==selected);int position=lv_obj_get_scroll_y(body);assert(position>0);navigate(-3);navigate(0);assert(lv_obj_get_scroll_y(body)==position);
+ navigate(-3);tick(NULL);tap(210,412);assert(!state.paused);printf("LVGL touch selection, swipe paging/back, vertical drag suppression, restored position and play/pause pass.\n");return 0;}
