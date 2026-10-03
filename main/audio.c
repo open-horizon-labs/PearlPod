@@ -94,12 +94,12 @@ static void preference_task(void *arg){
 static void command_apply(command c){
     pearl_state s=pearl_audio_state();
     if(detached&&c.kind!=ATTACH&&c.kind!=STOP&&c.kind!=VOLUME)return;
-    if(c.kind==PLAY && c.value>=0 && (unsigned)c.value<library->track_count){active_collection=-1;s.track=c.value;playback_epoch++;s.seconds=0;s.paused=false;s.error[0]=0;}
-    else if(c.kind==COLLECTION){unsigned index=c.value,position=c.position;if(index<library->collection_count&&position<library->collections[index].count){active_collection=index;collection_position=position;s.track=library->collections[index].tracks[position];playback_epoch++;s.seconds=0;s.paused=false;s.error[0]=0;}}
+    if(c.kind==PLAY && c.value>=0 && (unsigned)c.value<library->track_count){active_collection=-1;s.track=c.value;playback_epoch++;s.seconds=0;s.milliseconds=0;s.paused=false;s.error[0]=0;}
+    else if(c.kind==COLLECTION){unsigned index=c.value,position=c.position;if(index<library->collection_count&&position<library->collections[index].count){active_collection=index;collection_position=position;s.track=library->collections[index].tracks[position];playback_epoch++;s.seconds=0;s.milliseconds=0;s.paused=false;s.error[0]=0;}}
     else if(c.kind==DETACH){save();detached=true;detach_signaled=false;playback_epoch++;s.paused=true;}
-    else if(c.kind==ATTACH){xSemaphoreTake(prefs_lock,portMAX_DELAY);library=pending_library;active_collection=-1;s.track=-1;s.seconds=0;s.paused=true;s.error[0]=0;char path[PEARL_PATH];size_t size=sizeof(path);if(prefs_open&&nvs_get_str(prefs,"track",path,&size)==ESP_OK)for(unsigned i=0;i<library->track_count;i++)if(!strcmp(path,library->tracks[i].path)){s.track=i;break;}publish(s);detached=false;xSemaphoreGive(prefs_lock);}
+    else if(c.kind==ATTACH){xSemaphoreTake(prefs_lock,portMAX_DELAY);library=pending_library;active_collection=-1;s.track=-1;s.seconds=0;s.milliseconds=0;s.paused=true;s.error[0]=0;char path[PEARL_PATH];size_t size=sizeof(path);if(prefs_open&&nvs_get_str(prefs,"track",path,&size)==ESP_OK)for(unsigned i=0;i<library->track_count;i++)if(!strcmp(path,library->tracks[i].path)){s.track=i;break;}publish(s);detached=false;xSemaphoreGive(prefs_lock);}
     else if(c.kind==TOGGLE){if(s.track<0 && library->track_count)s.track=0;s.paused=!s.paused;}
-    else if(c.kind==STEP){if(active_collection>=0){collection_position=pearl_collection_step(library,active_collection,collection_position,c.value);s.track=collection_position>=0?(int)library->collections[active_collection].tracks[collection_position]:-1;}else s.track=pearl_next(library,s.track,c.value);playback_epoch++;s.seconds=0;s.error[0]=0;}
+    else if(c.kind==STEP){if(active_collection>=0){collection_position=pearl_collection_step(library,active_collection,collection_position,c.value);s.track=collection_position>=0?(int)library->collections[active_collection].tracks[collection_position]:-1;}else s.track=pearl_next(library,s.track,c.value);playback_epoch++;s.seconds=0;s.milliseconds=0;s.error[0]=0;}
     else if(c.kind==VOLUME)s.volume=pearl_volume(s.volume,c.value,CONFIG_PEARL_MAX_VOLUME);
     else if(c.kind==STOP){s.paused=true;stopping=true;}
     publish(s);
@@ -129,7 +129,7 @@ static bool emit(const int16_t *samples,size_t frames,unsigned channels,unsigned
         phase-=1.0;previous[0]=l;previous[1]=r;
     }
     if(used){size_t bytes=0;if(i2s_channel_write(tx,output,used*sizeof(*output),&bytes,1000)!=ESP_OK||bytes!=used*sizeof(*output)){error("Audio output interrupted");return false;}}
-    pearl_state s=pearl_audio_state();s.seconds=frames_written/48000;publish(s);return true;
+    pearl_state s=pearl_audio_state();s.seconds=frames_written/48000;s.milliseconds=frames_written/48;publish(s);return true;
 }
 static bool wait_playing(int current){
     while(service(current)){
@@ -187,7 +187,7 @@ static void task(void *arg){
         if(s.track<0||s.paused)continue;
         bool eof=decode(library->tracks[s.track].path,s.track);
         if(eof && service(s.track)){pearl_state now=pearl_audio_state();int next=pearl_next(library,s.track,1);const pearl_album *a=&library->albums[library->tracks[s.track].album];
-            now.seconds=0;if(active_collection>=0){const pearl_collection *collection=&library->collections[active_collection];if((unsigned)(collection_position+1)>=collection->count)now.paused=true;else{collection_position++;now.track=collection->tracks[collection_position];playback_epoch++;}}else if(next==(int)a->first){now.paused=true;}else{now.track=next;playback_epoch++;}publish(now);save();}
+            now.seconds=0;now.milliseconds=0;if(active_collection>=0){const pearl_collection *collection=&library->collections[active_collection];if((unsigned)(collection_position+1)>=collection->count)now.paused=true;else{collection_position++;now.track=collection->tracks[collection_position];playback_epoch++;}}else if(next==(int)a->first){now.paused=true;}else{now.track=next;playback_epoch++;}publish(now);save();}
     }
 stopped:
     if(tx)i2s_channel_disable(tx);

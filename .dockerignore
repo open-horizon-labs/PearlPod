@@ -1,0 +1,5 @@
+*
+!syncer/
+!syncer/*.py
+!syncer/requirements.txt
+!syncer/Dockerfile

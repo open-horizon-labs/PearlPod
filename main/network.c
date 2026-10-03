@@ -17,6 +17,7 @@
 #include "lwip/sockets.h"
 #include "nvs.h"
 #include "player.h"
+#include "sync.h"
 #include "power.h"
 #include "power_policy.h"
 #include "wifi_policy.h"
@@ -372,7 +373,7 @@ static esp_err_t diagnostics(httpd_req_t *r) {
       "\"minimum_internal\":%u,\"largest_internal\":%u,\"free_psram\":%u,"
       "\"worker_stack_free\":%u},\"wifi\":{\"setup\":%s,\"connected\":%s,"
       "\"scanning\":%s,\"retries\":%u,\"disconnect_reason\":%u,\"lease_"
-      "seconds\":%llu}}",
+      "seconds\":%llu},\"sync\":{\"busy\":%s}}",
       (unsigned long long)(esp_timer_get_time() / 1000), esp_reset_reason(),
       esp_sleep_get_wakeup_cause(), audio.ready ? "true" : "false",
       audio.ready && !audio.paused ? "true" : "false", audio.track,
@@ -391,7 +392,7 @@ static esp_err_t diagnostics(httpd_req_t *r) {
       (unsigned)uxTaskGetStackHighWaterMark(worker_handle),
       flag(0) ? "true" : "false", flag(1) ? "true" : "false",
       flag(2) ? "true" : "false", retry_count, atomic_load(&disconnect_reason),
-      (unsigned long long)lease_seconds);
+      (unsigned long long)lease_seconds,pearl_sync_busy()?"true":"false");
   esp_err_t result;
   if (length < 0 || length >= 1200)
     result = httpd_resp_send_err(r, HTTPD_500_INTERNAL_SERVER_ERROR,

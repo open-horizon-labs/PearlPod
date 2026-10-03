@@ -18,6 +18,7 @@
 #include "network.h"
 #include "power.h"
 #include "power_policy.h"
+#include "sync.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/rtc_io.h"
 #include "esp_vfs_fat.h"
@@ -702,7 +703,7 @@ static void buttons_task(void *arg)
         pearl_state playback=pearl_audio_state();bool playing=playback.ready&&!playback.paused;
         if(playing||was_playing){paused_since=now;}
         was_playing=playing;
-        pearl_power_input policy={.now=now,.last_activity=pearl_power_last_activity(),.paused_since=paused_since,.screen_timeout=CONFIG_PEARL_SCREEN_TIMEOUT_SEC*1000u,.idle_timeout=CONFIG_PEARL_IDLE_SLEEP_SEC*1000u,.playing=playing,.screen_asleep=screen_locked,.network=pearl_network_enabled(),.busy=atomic_load(&rescan_running)||!atomic_load(&library_ready),.usb_connected=usb_serial_jtag_is_connected(),.button_released=gpio_get_level(up)&&gpio_get_level(down),.deep_supported=pearl_power_deep_supported()};
+        pearl_power_input policy={.now=now,.last_activity=pearl_power_last_activity(),.paused_since=paused_since,.screen_timeout=CONFIG_PEARL_SCREEN_TIMEOUT_SEC*1000u,.idle_timeout=CONFIG_PEARL_IDLE_SLEEP_SEC*1000u,.playing=playing,.screen_asleep=screen_locked,.network=pearl_network_enabled(),.busy=pearl_sync_busy()||atomic_load(&rescan_running)||!atomic_load(&library_ready),.usb_connected=usb_serial_jtag_is_connected(),.button_released=gpio_get_level(up)&&gpio_get_level(down),.deep_supported=pearl_power_deep_supported()};
         pearl_power_action action=pearl_power_decide(&policy);
         if(action==PEARL_POWER_SCREEN_SLEEP)display_sleep(true,false);
         if(action==PEARL_POWER_DEEP_SLEEP)enter_standby();
@@ -717,6 +718,7 @@ static void display_sleep(bool asleep,bool manual){
     example_lvgl_unlock();
 }
 static void enter_standby(void){
+    if(!pearl_sync_shutdown()){ESP_LOGW("pearl","Sync closing; hold again to sleep.");pearl_power_activity();return;}
     if(!pearl_network_shutdown()){ESP_LOGW("pearl","WiFi shutdown pending; hold again to sleep.");pearl_power_activity();return;}
     const int up=CONFIG_PEARL_BUTTON_UP;
     if(pearl_power_deep_supported()&&esp_sleep_enable_ext0_wakeup(up,0)!=ESP_OK){ESP_LOGW("pearl","Wake configuration failed; staying awake.");pearl_power_activity();return;}

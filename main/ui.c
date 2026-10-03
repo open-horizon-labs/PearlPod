@@ -3,6 +3,8 @@
 #include "power.h"
 #include "lvgl.h"
 #include "artwork.h"
+#include "lyrics.h"
+#include "sync.h"
 #ifdef PEARL_UI_HOST
 #include "platform.h"
 #else
@@ -37,6 +39,17 @@ static char startup_error[120];
 typedef struct {char path[PEARL_PATH];unsigned generation;int slot;} art_request;
 typedef struct {uint8_t *pixels;unsigned generation;int slot;} art_result;
 static void render(void);
+static pearl_lyrics lyrics;
+static lv_obj_t *lyric_lines[3],*lyrics_button,*sync_info;
+static int lyric_track=-1,lyric_index=-1;
+static bool lyric_follow=true;
+static void go_lyrics(lv_event_t *e){page=-6;render();}
+static void follow_lyrics(lv_event_t *e){lyric_follow=true;}
+static void lyric_move(int step){lyric_follow=false;int next=lyric_index+step;if(next>=0&&(unsigned)next<lyrics.count)lyric_index=next;}
+static void lyric_prev(lv_event_t *e){lyric_move(-1);}
+static void lyric_next(lv_event_t *e){lyric_move(1);}
+static void sync_now(lv_event_t *e){pearl_sync_start();}
+
 static lv_obj_t *network_info,*network_buttons[3];
 static void wifi_open(lv_event_t *e){page=-5;render();}
 static void wifi_setup(lv_event_t *e){pearl_network_setup();}
@@ -57,7 +70,7 @@ static void save_place(void){if(page==-1)album_scroll[album_offset/ALBUM_PAGE]=l
 static void navigate(int target){save_place();page=target;render();}
 static void go_albums(lv_event_t *e){navigate(-1);}
 static void go_now(lv_event_t *e){navigate(-3);}
-static void go_back(lv_event_t *e){navigate(page==-1?-4:-1);}
+static void go_back(lv_event_t *e){navigate(page==-6?-3:page==-1?-4:-1);}
 static void open_album(lv_event_t *e){int target=(intptr_t)lv_event_get_user_data(e);if(target!=page)track_offset=track_offsets[target];navigate(target);}
 static void browse_page(int direction){
     save_place();if(page==-1){if(direction<0&&album_offset>=ALBUM_PAGE)album_offset-=ALBUM_PAGE;else if(direction>0&&album_offset+ALBUM_PAGE<browse_count)album_offset+=ALBUM_PAGE;else return;}
@@ -72,6 +85,7 @@ static void next(lv_event_t *e){pearl_audio_step(1);}
 static void play_album(lv_event_t *e){if(lib&&page>=0){save_place();pearl_audio_play_collection(page,0);page=-3;render();}}
 static void gesture(lv_event_t *e){
     lv_indev_t *input=lv_indev_get_act();if(!input||!lib)return;lv_dir_t dir=lv_indev_get_gesture_dir(input);
+    if(page==-6){lv_indev_wait_release(input);if(dir==LV_DIR_TOP)lyric_move(1);else if(dir==LV_DIR_BOTTOM)lyric_move(-1);else if(dir==LV_DIR_RIGHT)navigate(-3);return;}
     if(dir!=LV_DIR_LEFT&&dir!=LV_DIR_RIGHT)return;
     lv_indev_wait_release(input); // Consume the release so a swipe cannot select a track.
     if(page>=0&&dir==LV_DIR_RIGHT)navigate(-1);
@@ -93,7 +107,7 @@ static void art_task(void *arg){
 }
 static bool request_art(const char *path,int slot){art_request r={.generation=art_generation,.slot=slot};snprintf(r.path,sizeof(r.path),"%s",path?path:"");return xQueueSend(art_requests,&r,0)==pdTRUE;}
 static void reset_body(void){
-    art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_obj_clean(body);title=album_label=art=network_info=NULL;last_track=last_mark=-2;
+    art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_obj_clean(body);title=album_label=art=network_info=lyrics_button=sync_info=NULL;memset(lyric_lines,0,sizeof(lyric_lines));last_track=last_mark=-2;
     if(art_pixels){lv_img_cache_invalidate_src(&art_desc);free(art_pixels);art_pixels=NULL;}
     for(unsigned i=0;i<ALBUM_PAGE;i++){lv_img_cache_invalidate_src(&thumb_desc[i]);free(thumb_pixels[i]);thumb_pixels[i]=NULL;thumbs[i]=NULL;thumb_requested[i]=false;}
     memset(track_rows,0,sizeof(track_rows));lv_obj_scroll_to_y(body,0,LV_ANIM_OFF);
@@ -112,7 +126,7 @@ static void render(void){
     lv_obj_set_pos(heading,18,12);lv_obj_set_width(heading,268);lv_obj_set_pos(body,18,60);lv_obj_set_size(body,424,304);lv_obj_clear_flag(body,LV_OBJ_FLAG_SCROLLABLE);lv_obj_add_flag(body,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_pos(status,18,367);lv_obj_set_size(status,424,20);lv_obj_clear_flag(hint,LV_OBJ_FLAG_HIDDEN);
     unsigned count=0;bool has_pages=false;
-    if(page==-4){lv_label_set_text(heading,"Your library");lv_label_set_text(hint,"Choose how to explore");for(int i=0;i<4;i++)button(body,view_names[i],0,i*60,424,52,choose_view,(void *)(intptr_t)i);button(body,"Rescan card",0,240,424,60,rescan,NULL);button(body,"WiFi",0,312,424,60,wifi_open,NULL);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);return;
+    if(page==-4){lv_label_set_text(heading,"Your library");lv_label_set_text(hint,"Choose how to explore");for(int i=0;i<4;i++)button(body,view_names[i],0,i*60,424,52,choose_view,(void *)(intptr_t)i);button(body,"Rescan card",0,240,424,60,rescan,NULL);button(body,"WiFi",0,312,424,60,wifi_open,NULL);button(body,"Sync now",0,384,424,60,sync_now,NULL);sync_info=label(body,"",0,456,424,&lv_font_montserrat_16);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);return;
     }else if(page==-5){
         lv_label_set_text(heading,"WiFi");lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_label_set_text(hint,"Setup is for a grown-up. Music stays offline.");network_info=label(body,"WiFi is off",0,0,424,&lv_font_montserrat_20);lv_obj_set_height(network_info,88);lv_label_set_long_mode(network_info,LV_LABEL_LONG_WRAP);network_buttons[0]=button(body,"Set up WiFi",0,100,424,60,wifi_setup,NULL);network_buttons[1]=button(body,"Connect for diagnostics",0,172,424,60,wifi_connect,NULL);network_buttons[2]=button(body,"Turn WiFi off",0,244,424,60,wifi_off,NULL);return;
     }else if(page==-1){
@@ -125,9 +139,17 @@ static void render(void){
         pearl_collection *a=group();lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_obj_set_width(heading,194);lv_label_set_text(heading,a->title);button(body,LV_SYMBOL_PLAY "  Play all",0,0,424,64,play_album,NULL);
         count=a->count-track_offset;if(count>TRACK_PAGE)count=TRACK_PAGE;for(unsigned i=0;i<count;i++)row(lib->tracks[a->tracks[track_offset+i]].title,0,track_offset+i,76+i*80,false);
         has_pages=a->count>TRACK_PAGE;lv_label_set_text(hint,"Swipe right to return");lv_obj_scroll_to_y(body,track_scroll[page],LV_ANIM_OFF);
+    }else if(page==-6){
+        lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_label_set_text(heading,"Lyrics");lv_label_set_text(hint,"Swipe to browse. Follow keeps your place.");
+        pearl_state state=pearl_audio_state();
+        if(state.track!=lyric_track){pearl_lyrics_free(&lyrics);lyric_track=state.track;lyric_index=-1;lyric_follow=true;if(state.track>=0&&(unsigned)state.track<lib->track_count)pearl_lyrics_load(lib->tracks[state.track].lyrics,&lyrics);}
+        if(!lyrics.text){label(body,"No lyrics for this song yet.",0,80,424,&lv_font_montserrat_24);}
+        else if(!lyrics.timed){lyric_lines[1]=label(body,lyrics.text,0,0,424,&lv_font_montserrat_24);lv_label_set_long_mode(lyric_lines[1],LV_LABEL_LONG_WRAP);lv_obj_set_height(lyric_lines[1],LV_SIZE_CONTENT);lv_label_set_text(hint,"Untimed lyrics - swipe up to read");}
+        else{for(int i=0;i<3;i++){lyric_lines[i]=label(body,"",0,i*76,424,i==1?&lv_font_montserrat_24:&lv_font_montserrat_20);lv_obj_set_height(lyric_lines[i],68);lv_label_set_long_mode(lyric_lines[i],LV_LABEL_LONG_WRAP);lv_obj_set_style_text_color(lyric_lines[i],lv_color_hex(i==1?yellow:teal),0);}button(body,LV_SYMBOL_UP,0,240,80,56,lyric_prev,NULL);button(body,"Follow",96,240,232,56,follow_lyrics,NULL);button(body,LV_SYMBOL_DOWN,344,240,80,56,lyric_next,NULL);lv_obj_clear_flag(body,LV_OBJ_FLAG_SCROLLABLE);}
     }else if(page==-3){
         lv_obj_add_flag(nav,LV_OBJ_FLAG_HIDDEN);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_clear_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_obj_clear_flag(volume_label,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(hint,LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_pos(heading,96,14);lv_obj_set_width(heading,244);lv_label_set_text(heading,"Now playing");lv_obj_set_size(body,424,302);lv_obj_clear_flag(body,LV_OBJ_FLAG_SCROLLABLE);
+        lyrics_button=button(body,"Lyrics",0,0,84,56,go_lyrics,NULL);lv_obj_add_flag(lyrics_button,LV_OBJ_FLAG_HIDDEN);
         art=lv_img_create(body);lv_img_set_src(art,&pearl_welcome);lv_obj_set_pos(art,92,0);
         title=label(body,"Choose an album",0,248,424,&lv_font_montserrat_24);lv_label_set_long_mode(title,LV_LABEL_LONG_SCROLL_CIRCULAR);lv_obj_set_style_anim_speed(title,28,0);lv_obj_set_style_text_align(title,LV_TEXT_ALIGN_CENTER,0);
         album_label=label(body,"Your music. Your world.",0,278,328,&lv_font_montserrat_16);lv_label_set_long_mode(album_label,LV_LABEL_LONG_SCROLL_CIRCULAR);lv_obj_set_style_anim_speed(album_label,24,0);
@@ -142,14 +164,19 @@ static void render(void){
 static void tick(lv_timer_t *timer){
     if(power_asleep){art_result r;while(xQueueReceive(art_results,&r,0)==pdTRUE)free(r.pixels);return;}
     if(network_info){pearl_network_state n=pearl_network_snapshot();char info[400];if(n.setup)snprintf(info,sizeof(info),"%s\n\nNetwork: %s\nPassword: %s\nOpen http://192.168.4.1\n%s",n.message,n.ap_ssid,n.ap_password,n.scanning?"Finding networks...":"");else snprintf(info,sizeof(info),"%s%s%s",n.message,n.connected?"\nIP: ":"",n.connected?n.ip:"");lv_label_set_text(network_info,info);int height=n.setup?220:88;lv_obj_set_height(network_info,height);for(int i=0;i<3;i++)lv_obj_set_y(network_buttons[i],height+12+i*72);}
+    if(sync_info){char message[120];pearl_sync_status(message,sizeof(message));lv_label_set_text(sync_info,message);}
     if(!lib)return;
-    pearl_state s=pearl_audio_state();char text[160];snprintf(text,sizeof(text),"Vol %d",s.volume);lv_label_set_text(volume_label,text);
+    pearl_state s=pearl_audio_state();if(page!=-6&&s.track!=lyric_track&&lyrics.text){pearl_lyrics_free(&lyrics);lyric_track=-1;}char text[160];snprintf(text,sizeof(text),"Vol %d",s.volume);lv_label_set_text(volume_label,text);
     lv_label_set_text(status,s.error[0]?s.error:startup_error);bool error=s.error[0]||startup_error[0];if(error)lv_obj_add_flag(hint,LV_OBJ_FLAG_HIDDEN);else if(page!=-3)lv_obj_clear_flag(hint,LV_OBJ_FLAG_HIDDEN);
     if(page==-3&&title){
-        if(s.track!=last_track){last_track=s.track;art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_img_cache_invalidate_src(&art_desc);free(art_pixels);art_pixels=NULL;if(s.track>=0&&(unsigned)s.track<lib->track_count){pearl_track *t=&lib->tracks[s.track];lv_label_set_text(title,t->title);lv_label_set_text(album_label,lib->albums[t->album].title);lv_img_set_src(art,&pearl_welcome);request_art(lib->albums[t->album].art[0]?lib->albums[t->album].art:t->path,-1);}}
+        if(s.track!=last_track){last_track=s.track;art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_img_cache_invalidate_src(&art_desc);free(art_pixels);art_pixels=NULL;if(s.track>=0&&(unsigned)s.track<lib->track_count){pearl_track *t=&lib->tracks[s.track];lv_label_set_text(title,t->title);if(t->lyrics)lv_obj_clear_flag(lyrics_button,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(lyrics_button,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(album_label,lib->albums[t->album].title);lv_img_set_src(art,&pearl_welcome);request_art(lib->albums[t->album].art[0]?lib->albums[t->album].art:t->path,-1);}}
         lv_label_set_text(play_label,s.paused?LV_SYMBOL_PLAY:LV_SYMBOL_PAUSE);lv_obj_set_style_bg_color(lv_obj_get_parent(play_label),lv_color_hex(s.paused?yellow:teal),0);lv_label_set_text(heading,s.track<0?"Your music":s.paused?"Paused":"Now playing");
         snprintf(text,sizeof(text),"%u:%02u",(unsigned)(s.seconds/60),(unsigned)(s.seconds%60));lv_label_set_text(time_label,text);lv_obj_clear_flag(time_label,LV_OBJ_FLAG_HIDDEN);
     }else lv_obj_add_flag(time_label,LV_OBJ_FLAG_HIDDEN);
+    if(page==-6){
+        if(s.track!=lyric_track){render();return;}
+        if(lyrics.timed){if(lyric_follow)lyric_index=pearl_lyrics_at(&lyrics,s.milliseconds);for(int i=0;i<3;i++){int index=lyric_index+i-1;lv_label_set_text(lyric_lines[i],index>=0&&(unsigned)index<lyrics.count?lyrics.cues[index].text:"");}}
+    }
     if(page>=0&&s.track!=last_mark){last_mark=s.track;pearl_collection *a=group();for(unsigned i=0;i<TRACK_PAGE&&track_rows[i];i++){bool active=a->tracks[track_offset+i]==(unsigned)s.track;lv_obj_set_style_bg_color(track_rows[i],lv_color_hex(active?0x284b50:surface),0);lv_label_set_text(lv_obj_get_child(track_rows[i],2),active?"Selected track":"");}}
     if(page==-1){lv_area_t area;lv_obj_get_coords(body,&area);for(unsigned i=0;i<ALBUM_PAGE&&thumbs[i];i++){lv_area_t bounds;lv_obj_get_coords(lv_obj_get_parent(thumbs[i]),&bounds);if(!thumb_requested[i]&&bounds.y2>=area.y1&&bounds.y1<=area.y2){pearl_collection *c=&lib->collections[browse_ids[album_offset+i]];if(c->count){pearl_track *t=&lib->tracks[c->tracks[0]];pearl_album *a=&lib->albums[t->album];thumb_requested[i]=request_art(a->art[0]?a->art:t->path,i);}else thumb_requested[i]=true;}}}
     art_result r;while(xQueueReceive(art_results,&r,0)==pdTRUE){
@@ -173,8 +200,8 @@ void pearl_ui_start(void){
     lv_obj_add_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_next,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(time_label,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(volume_label,LV_OBJ_FLAG_HIDDEN);
     art_requests=xQueueCreate(ALBUM_PAGE+1,sizeof(art_request));art_results=xQueueCreate(ALBUM_PAGE+1,sizeof(art_result));xTaskCreate(art_task,"artwork",16384,NULL,1,NULL);lv_timer_create(tick,150,NULL);
 }
-void pearl_ui_ready(pearl_library *l,const char *err){free(track_offsets);free(track_scroll);free(album_scroll);free(browse_ids);lib=l;track_offsets=calloc(l->collection_count+1,sizeof(*track_offsets));track_scroll=calloc(l->collection_count+1,sizeof(*track_scroll));album_scroll=calloc(l->collection_count/ALBUM_PAGE+1,sizeof(*album_scroll));browse_ids=calloc(l->collection_count+1,sizeof(*browse_ids));if(!track_offsets||!track_scroll||!album_scroll||!browse_ids){page=-2;lib=NULL;reset_body();lv_obj_add_flag(nav,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_next,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(heading,"Library too large");lv_label_set_text(status,"Reduce the card library, then restart.");return;}rebuild_browse();snprintf(startup_error,sizeof(startup_error),"%s",err?err:"");if(!startup_error[0]&&l->skipped)snprintf(startup_error,sizeof(startup_error),"Skipped %u entries; check paths/playlists.",l->skipped);page=-1;render();}
+void pearl_ui_ready(pearl_library *l,const char *err){pearl_lyrics_free(&lyrics);lyric_track=-1;free(track_offsets);free(track_scroll);free(album_scroll);free(browse_ids);lib=l;track_offsets=calloc(l->collection_count+1,sizeof(*track_offsets));track_scroll=calloc(l->collection_count+1,sizeof(*track_scroll));album_scroll=calloc(l->collection_count/ALBUM_PAGE+1,sizeof(*album_scroll));browse_ids=calloc(l->collection_count+1,sizeof(*browse_ids));if(!track_offsets||!track_scroll||!album_scroll||!browse_ids){page=-2;lib=NULL;reset_body();lv_obj_add_flag(nav,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_next,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(heading,"Library too large");lv_label_set_text(status,"Reduce the card library, then restart.");return;}rebuild_browse();snprintf(startup_error,sizeof(startup_error),"%s",err?err:"");if(!startup_error[0]&&l->skipped)snprintf(startup_error,sizeof(startup_error),"Skipped %u entries; check paths/playlists.",l->skipped);page=-1;render();}
 
 void pearl_ui_scanning(void){save_place();page=-2;reset_body();lv_label_set_text(lv_obj_get_child(back,0),page==-1?LV_SYMBOL_LIST:LV_SYMBOL_LEFT);lv_obj_add_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(heading,"Scanning card...");lv_label_set_text(hint,"Your music will be ready soon.");lv_label_set_text(status,"");lv_obj_add_flag(nav,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_next,LV_OBJ_FLAG_HIDDEN);lib=NULL;}
 
-void pearl_ui_power(bool asleep){power_asleep=asleep;if(asleep){save_place();reset_body();}else if(lib)render();}
+void pearl_ui_power(bool asleep){power_asleep=asleep;if(asleep){save_place();reset_body();pearl_lyrics_free(&lyrics);lyric_track=-1;}else if(lib)render();}

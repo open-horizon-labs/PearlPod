@@ -1,0 +1,17 @@
+services:
+  syncer:
+    build:
+      context: ..
+      dockerfile: syncer/Dockerfile
+    user: "${PEARLPOD_UID:-1000}:${PEARLPOD_GID:-1000}"
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ${PEARLPOD_MUSIC}:/music:ro
+      - ${PEARLPOD_CACHE}:/cache
+    secrets:
+      - plex_token
+    command: ["--plex-token", "/run/secrets/plex_token", "--music", "/music", "--cache", "/cache", "--advertise-ip", "${PEARLPOD_HOST_IP}"]
+secrets:
+  plex_token:
+    file: ${PEARLPOD_PLEX_TOKEN}

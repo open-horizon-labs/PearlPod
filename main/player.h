@@ -5,7 +5,7 @@
 #define PEARL_NAME 160
 #define PEARL_ART_SIZE 240
 
-typedef struct {char *path,*title,*artist;unsigned album,track_number,disc_number;} pearl_track;
+typedef struct {char *path,*title,*artist,*lyrics,*genre;unsigned album,track_number,disc_number;} pearl_track;
 typedef struct {char *path,*title,*artist,*art;unsigned first,count;} pearl_album;
 typedef enum {PEARL_ALBUMS,PEARL_ARTISTS,PEARL_FOLDERS,PEARL_PLAYLISTS} pearl_view;
 typedef struct {char *title,*path;unsigned *tracks,count,capacity;pearl_view kind;} pearl_collection;
@@ -20,7 +20,7 @@ typedef struct { bool raw,stable,long_sent; uint32_t changed,pressed; } pearl_bu
 typedef enum { BUTTON_NONE,BUTTON_SHORT,BUTTON_LONG } pearl_button_event;
 pearl_button_event pearl_button_update(pearl_button *b,bool pressed,uint32_t now);
 
-typedef struct { int track,volume; bool paused,ready; uint32_t seconds; char error[120]; } pearl_state;
+typedef struct { int track,volume; bool paused,ready; uint32_t seconds,milliseconds; char error[120]; } pearl_state;
 void pearl_audio_start(pearl_library *lib);
 void pearl_audio_play(int track);
 void pearl_audio_play_collection(int collection,int position);

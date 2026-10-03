@@ -1,6 +1,6 @@
 # Playlist export and efficient sync — concrete design
 
-This is a design and evidence report, not an installed NAS publisher or sync firmware. It expands [the solution-space analysis](PLAYLIST-SYNC-SOLUTION.md). The outcome is Listener choosing songs once and finding those ordered playlists on her offline Pod. The binding constraints are reliable playlist-to-file mapping, a bounded MCU memory budget, and preserving playback through incomplete updates.
+This records the earlier exploration. The executed local candidate selects **HTTP trigger → anonymous native FTP → lftp upload**, with no sync authentication, rather than the HTTP-pull proposal below. Selection is the Selected profile profile’s `PP:` playlists. MP3 album-art embedding was subsequently requested, so cover/tag edits change audio file hashes. Interrupted files are retransferred, not range-resumed. The actual managed root is `music/.pearl/`. See [current implementation and acceptance evidence](SYNC-IMPLEMENTATION.md); the historical proposal below is not a claim of implemented behavior. It expands [the solution-space analysis](PLAYLIST-SYNC-SOLUTION.md). The outcome is Listener choosing songs once and finding those ordered playlists on her offline Pod. The binding constraints are reliable playlist-to-file mapping, a bounded MCU memory budget, and preserving playback through incomplete updates.
 
 ## What “export” means for Plex
 

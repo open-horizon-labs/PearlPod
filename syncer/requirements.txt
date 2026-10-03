@@ -1,1 +1,4 @@
 PlexAPI==4.17.2
+Pillow==11.3.0
+mutagen==1.47.0
+zeroconf==0.148.0

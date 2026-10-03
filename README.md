@@ -1,6 +1,6 @@
 # PearlPod
 
-Offline anime-themed music firmware for Listener’s CS43131 FakePod Nano. The installed player supports MP3, FLAC and WAV, nested microSD albums, touchscreen playback, artwork and physical volume controls. Music playback stays offline; WiFi setup is an explicit action. Sync and playlist management are deferred.
+Offline anime-themed music firmware for Listener’s CS43131 FakePod Nano. The installed player supports MP3, FLAC and WAV, nested microSD albums, touchscreen playback, artwork and physical volume controls. Music playback stays offline; WiFi setup is an explicit action. The local firmware candidate adds Plex playlist sync and lyrics; on-device acceptance is pending.
 
 ## Everyday controls
 
@@ -57,7 +57,7 @@ For local UI verification after IDF has fetched managed components, run `tools/r
 
 Open Browse → the header library button → WiFi → Set up WiFi. Join the temporary PearlPod network using the password shown on the player, then open http://192.168.4.1. Find networks or enter a hidden network name, enter its password, and save. The page reports connection progress. PearlPod remembers up to four networks in device storage; passwords never appear in diagnostic output. Use Connect for diagnostics to select the strongest nearby saved network, or Turn WiFi off when finished. Setup stays available during a failed connection until its five-minute timeout. Diagnostic connections last fifteen minutes; their read-only `http://<player-IP>/status` endpoint reports playback, power, memory and connection health. Sessions shut the radio down automatically when they expire. WiFi is always off at boot and is stopped before standby. Only 2.4 GHz networks are supported.
 
-No music synchronization or playlist-management service is included yet. Existing local playlist-file playback remains available. See [WiFi design and verification](docs/WIFI-EXECUTION.md) for borrowed patterns, limits and evidence.
+The local sync candidate adds Your library → Sync now. A host prepares the Selected profile profile’s `PP:` playlists from existing NAS files with ffmpeg, then an HTTP trigger starts anonymous FTP delivery through lftp. Covers are embedded and available lyrics are carried over. Now Playing offers Lyrics when present. See [sync setup](syncer/README.md) and [implementation evidence](docs/SYNC-IMPLEMENTATION.md). Existing local playlist-file playback remains available. See [WiFi design and verification](docs/WIFI-EXECUTION.md) for borrowed patterns, limits and evidence.
 
 WiFi hardware status: the first image exposed a task-stack overflow. USB-window recovery restored device-tested c9e6efd, confirmed by the user and playback diagnostics. The current local firmware adds bounded WiFi sessions, crash-delayed networking, deep sleep and a revised RAM budget. Hardware evidence and remaining checks are in [power verification](docs/POWER-EXECUTION.md). See [verification](docs/VERIFICATION.md).
 

@@ -1,6 +1,6 @@
 # PearlPod export media contract
 
-Status: required behavior for the proposed exporter and firmware loader, not implemented export or lyric playback. This extends the playlist/sync design. The goal is that a selected song arrives with its identity, album, artwork, genres and available lyrics intact, regardless of conversion or transfer transport.
+Status: the local candidate implements managed export, genre fields, embedded covers and bounded lyric display. See [implementation evidence](SYNC-IMPLEMENTATION.md) for the current behavior and remaining gates. This document also retains proposed capabilities not yet implemented, including selectable lyric languages, unattended scheduling, free-space preflight and garbage collection. The selected managed layout is `music/.pearl/objects/` with catalogs in `music/.pearl/catalogs/`. Album-art embedding explicitly supersedes the earlier separate-art-only efficiency proposal: art/tag edits change the MP3 hash; lyric/playlist edits do not. This extends the playlist/sync design. The goal is that a selected song arrives with its identity, album, artwork, genres and available lyrics intact, regardless of conversion or transfer transport.
 
 ## Two layouts, explicit compatibility
 
