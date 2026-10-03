@@ -59,6 +59,27 @@ Open Browse → the header library button → WiFi → Set up WiFi. Join the tem
 
 No music synchronization or playlist-management service is included yet. Existing local playlist-file playback remains available. See [WiFi design and verification](docs/WIFI-EXECUTION.md) for borrowed patterns, limits and evidence.
 
-WiFi hardware status: the first image exposed a task-stack overflow. The corrected packaged build passes local checks; installation and device verification are pending a manual BOOT reconnect. See [verification](docs/VERIFICATION.md).
+WiFi hardware status: the first image exposed a task-stack overflow. USB-window recovery restored device-tested c9e6efd, confirmed by the user and playback diagnostics. The corrected WiFi/card-import package passes local checks and awaits device validation. See [verification](docs/VERIFICATION.md).
 
 For a boot loop, run `tools/recover.sh`: it automatically retries up to twenty times and restores the bundled last device-verified application, preserving preferences. See [recovery instructions and observed evidence](docs/RECOVERY.md).
+
+## WiFi credentials on microSD
+
+Copy [the example](examples/wifi.toml.example) to `wifi.toml` at the card root, beside the `music/` folder. Edit it with one to four `[[networks]]` entries, then insert the card and start the player. Use `ssid` and `password` strings for each network; `password = ""` explicitly selects an open network. TOML literal strings in single quotes are useful for passwords containing backslashes.
+
+```toml
+config_version = 1
+
+[[networks]]
+ssid = "Home"
+password = "Your password here"
+
+[[networks]]
+ssid = "Another network"
+password = 'Another password here'
+hidden = true
+```
+
+The complete valid file replaces the saved network list in one storage operation. The player removes `wifi.toml` only after a successful import; failed parsing or storage preserves the file and previous networks. If removal fails, it reports that the imported file remains. WiFi stays off at boot; open WiFi → Connect saved network when needed. A single `[wlan]` section is also accepted in place of the repeated entries, using the familiar Pi field names; this is a PearlPod schema, not a general Raspberry Pi configuration importer. Encrypted Pi passwords and unrelated Pi settings are unsupported. The file is limited to 8 KiB, SSIDs to 32 UTF-8 bytes, and passphrases to 8–63 bytes or empty. Malformed, duplicate or excess entries reject the whole import. Never commit a real credentials file.
+
+The current device is on the recovered working firmware; microSD import is included in the locally built candidate package. See [fact-check and implementation evidence](docs/CARD-WIFI.md).

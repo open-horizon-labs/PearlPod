@@ -19,3 +19,7 @@ cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_metadat
 cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_wifi_policy.c -o /tmp/pearl-wifi-policy
 /tmp/pearl-wifi-policy
 node tests/test_portal.js
+
+cc -std=c17 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fsanitize=address,undefined -I main -I vendor tests/test_wifi_config.c main/wifi_config.c vendor/tomlc17.c -lm -o /tmp/pearl-wifi-config
+/tmp/pearl-wifi-config
+python3 tests/test_recovery.py

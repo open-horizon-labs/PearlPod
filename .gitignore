@@ -8,3 +8,7 @@ __pycache__/
 .DS_Store
 
 .flash-venv/
+
+# Real microSD provisioning credentials; examples use a different suffix.
+wifi.toml
+custom.toml

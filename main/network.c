@@ -22,9 +22,7 @@
  * records on every path. Independently implemented here; no copied source.
  * Reconnect pause/backoff follows T-Dongle gateway_main.c at ce0e172.
  */
-typedef struct {
-  char ssid[33], password[65];
-} profile;
+typedef pearl_wifi_profile profile;
 typedef enum { SETUP, CONNECT, SCAN, OFF, SAVE } action;
 typedef struct {
   action kind;
@@ -129,6 +127,40 @@ static __attribute__((noinline)) void load(void) {
       }
   }
   nvs_close(n);
+}
+static bool persist_profiles(const pearl_wifi_profile *next, unsigned count,
+                             void *context) {
+  if (count == profile_count &&
+      !memcmp(profiles, next, count * sizeof(profile)))
+    return true;
+  nvs_handle_t n;
+  if (nvs_open("pearl_wifi", NVS_READWRITE, &n) != ESP_OK)
+    return false;
+  esp_err_t e = nvs_set_blob(n, "profiles", next, count * sizeof(profile));
+  if (e == ESP_OK)
+    e = nvs_commit(n);
+  nvs_close(n);
+  return e == ESP_OK;
+}
+static __attribute__((noinline)) void import_card(void) {
+  profile next[PEARL_WIFI_PROFILE_LIMIT] = {0};
+  unsigned count = 0;
+  pearl_wifi_import_result result = pearl_wifi_config_import(
+      "/sdcard/wifi.toml", persist_profiles, NULL, next, &count);
+  if (result == WIFI_IMPORT_DONE || result == WIFI_IMPORT_RETAINED) {
+    memcpy(profiles, next, sizeof(profiles));
+    profile_count = count;
+    selected = -1;
+    message(result == WIFI_IMPORT_DONE
+                ? "Card WiFi imported. WiFi is off."
+                : "WiFi imported; remove wifi.toml from the card.");
+  } else if (result == WIFI_IMPORT_INVALID)
+    message("Invalid wifi.toml. Saved networks unchanged.");
+  else if (result == WIFI_IMPORT_STORAGE)
+    message("Cannot save wifi.toml. File and saved networks kept.");
+  else if (result == WIFI_IMPORT_IO)
+    message("Cannot read wifi.toml. Saved networks unchanged.");
+  memset(next, 0, sizeof(next));
 }
 static bool save(profile p) {
   profile next[PEARL_WIFI_PROFILE_LIMIT];
@@ -499,6 +531,7 @@ static __attribute__((noinline)) void scan_done(void) {
 }
 static void worker(void *arg) {
   load();
+  import_card();
   command c;
   for (;;) {
     if (xQueueReceive(commands, &c, pdMS_TO_TICKS(100)) == pdTRUE) {

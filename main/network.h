@@ -1,7 +1,7 @@
 #pragma once
 #include <stdbool.h>
 #define PEARL_WIFI_SCAN_LIMIT 20
-#define PEARL_WIFI_PROFILE_LIMIT 4
+#include "wifi_config.h"
 typedef struct {
   char ssid[33];
   int rssi;

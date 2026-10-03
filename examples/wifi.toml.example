@@ -1,0 +1,17 @@
+# Copy to wifi.toml at the microSD card root, beside music/.
+# Replaces all saved networks (up to four). WiFi stays off until requested.
+# Removed after successful import. Real credentials must not be committed.
+config_version = 1
+
+[[networks]]
+ssid = "Your home network"
+password = "Replace this password"
+
+[[networks]]
+ssid = 'Another network'
+password = 'Replace this too'
+hidden = true
+
+# For an open network, use password = "".
+# Pi-style single [wlan] is also accepted instead of [[networks]].
+# Only plaintext passphrases are supported; password_encrypted must be false.
