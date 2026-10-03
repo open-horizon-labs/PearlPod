@@ -60,3 +60,5 @@ Open Browse → the header library button → WiFi → Set up WiFi. Join the tem
 No music synchronization or playlist-management service is included yet. Existing local playlist-file playback remains available. See [WiFi design and verification](docs/WIFI-EXECUTION.md) for borrowed patterns, limits and evidence.
 
 WiFi hardware status: the first image exposed a task-stack overflow. The corrected packaged build passes local checks; installation and device verification are pending a manual BOOT reconnect. See [verification](docs/VERIFICATION.md).
+
+For a boot loop, run `tools/recover.sh`: it automatically retries up to twenty times and restores the bundled last device-verified application, preserving preferences. See [recovery instructions and observed evidence](docs/RECOVERY.md).

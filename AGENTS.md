@@ -9,3 +9,5 @@ Use ESP-IDF v5.5.5 and the checked-in tools/build.sh and tools/check.sh. Preserv
 Never commit the factory flash backup, credentials, virtual environments or temporary build directories. Packaged firmware in dist is intentional; refresh it with local builds when firmware changes. Record material unverified behavior honestly. Full merged-image flashing resets NVS preferences; ordinary app flashing can preserve them.
 
 Keep Markdown paragraphs and list items on one source line, without fixed-width wrapping.
+
+Recovery: `tools/recover.sh` polls for this player’s USB identity and makes up to twenty bounded flash attempts, stopping on success. It restores bundled device-verified c9e6efd, app-only, preserving NVS. A tight USB polling loop successfully recovered the WiFi stack-overflow boot loop; prefer this documented approach over assuming USB unplug resets a battery-powered device. Read docs/RECOVERY.md before giving hardware reset instructions.
