@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
 
 
 def quote(value):
@@ -61,11 +62,16 @@ def capacity(required, existing, free_bytes, catalog_bytes):
     return needed
 
 
-def deliver(cache, head, address, port=21, timeout=840, free_bytes=None):
+def deliver(cache, head, address, port=21, timeout=840, free_bytes=None, trace=None):
     ip=ipaddress.ip_address(address)
     if ip.version!=4 or not ip.is_private or ip.is_loopback or ip.is_multicast or ip.is_unspecified:
         raise ValueError('Expected a local Pod IPv4 address')
     if not 1<=port<=65535: raise ValueError('Invalid FTP port')
+    started=time.monotonic()
+    metrics={}
+    def mark(name,before):
+        metrics[name]=round((time.monotonic()-before)*1000,2)
+        if trace:trace(dict(metrics))
     sha=head['catalog']
     if not re.fullmatch('[a-f0-9]{64}',sha): raise ValueError('Invalid catalog hash')
     catalog=cache/'catalogs'/sha
@@ -74,7 +80,11 @@ def deliver(cache, head, address, port=21, timeout=840, free_bytes=None):
         for line in catalog.read_text().splitlines():
             record=json.loads(line)
             if 'file' in record:required[record['file']]=record['bytes']
-        capacity(required,inventory(ip,port),free_bytes,catalog.stat().st_size)
+        before=time.monotonic()
+        existing=inventory(ip,port)
+        mark("inventory_ms",before)
+        capacity(required,existing,free_bytes,catalog.stat().st_size)
+    before=time.monotonic()
     with tempfile.TemporaryDirectory(dir=cache,prefix='delivery-') as directory:
         staged=Path(directory)/'objects';staged.mkdir()
         for line in catalog.read_text().splitlines():
@@ -98,5 +108,9 @@ def deliver(cache, head, address, port=21, timeout=840, free_bytes=None):
         ])+'\n'
         path=Path(directory)/'transfer.lftp';path.write_text(script)
         # No shell and no credentials; capture output instead of logging household data.
+        mark('staging_ms',before)
+        before=time.monotonic()
         subprocess.run(['lftp','-f',str(path)],check=True,timeout=timeout,capture_output=True)
+        mark("lftp_ms",before)
+        mark("total_ms",started)
     return sha

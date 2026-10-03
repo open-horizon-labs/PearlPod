@@ -1,5 +1,6 @@
 #include "sync.h"
 #include "esp_http_client.h"
+#include "esp_wifi.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "esp_vfs_fat.h"
@@ -22,6 +23,13 @@ static atomic_int stage;
 
 extern unsigned pearl_ftp_received_bytes(void);
 extern void pearl_ftp_reset_progress(void);
+extern void pearl_ftp_trace(char *out,unsigned size);
+static atomic_int tx_before=-1,tx_after=-1,tx_result,ps_result;
+static atomic_uint loop_us,loop_max_us,loop_calls,yield_us,connect_us,discovery_us,trigger_us,marker_us,network_us;
+void pearl_sync_trace(char *out,unsigned size) {
+ char ftp[384];pearl_ftp_trace(ftp,sizeof(ftp));
+ snprintf(out,size,"tx_before_qdbm=%d tx_after_qdbm=%d tx_result=%d ps_result=%d connect_us=%u discovery_us=%u trigger_us=%u marker_us=%u network_us=%u loops=%u loop_us=%u loop_max_us=%u yield_us=%u %s",atomic_load(&tx_before),atomic_load(&tx_after),atomic_load(&tx_result),atomic_load(&ps_result),atomic_load(&connect_us),atomic_load(&discovery_us),atomic_load(&trigger_us),atomic_load(&marker_us),atomic_load(&network_us),atomic_load(&loop_calls),atomic_load(&loop_us),atomic_load(&loop_max_us),atomic_load(&yield_us),ftp);
+}
 static atomic_uint elapsed, quiet, transferred;
 static const char *messages[] = {
  "Ready to sync\n\nAdd PP: playlists in Plex. Keep the library computer running. Pause music before starting.",
@@ -71,7 +79,9 @@ bool pearl_sync_source(const char *url) {
 extern void pearl_ftp_close(void);
 
 static __attribute__((noinline)) bool connected(void) {
+  int64_t before=esp_timer_get_time();
   pearl_network_state s = pearl_network_snapshot();
+  atomic_fetch_add(&network_us,(unsigned)(esp_timer_get_time()-before));
   return s.connected;
 }
 static void task(void *arg) {
@@ -91,7 +101,14 @@ static void task(void *arg) {
   }
   if (atomic_load(&cancel) || !connected()) { failure=9; goto done; }
 
+  connect_us=esp_timer_get_time()-session_start;
+  int8_t power;
+  if(esp_wifi_get_max_tx_power(&power)==ESP_OK)tx_before=power;
+  tx_result=esp_wifi_set_max_tx_power(84); /* Highest accepted SDK request; PHY limits still apply. */
+  if(esp_wifi_get_max_tx_power(&power)==ESP_OK)tx_after=power;
+  ps_result=esp_wifi_set_ps(WIFI_PS_NONE); /* Radio is off at completion. */
   stage = 2;
+  int64_t discovery_start=esp_timer_get_time();
   char url[200] = {0};
   nvs_handle_t h;
 
@@ -128,6 +145,7 @@ static void task(void *arg) {
       }
     }
   }
+  discovery_us=esp_timer_get_time()-discovery_start;
   if (!url[0]) { failure=10; goto done; }
 
   mkdir("/sdcard/music/.pearl", 0755);
@@ -179,7 +197,9 @@ static void task(void *arg) {
   esp_http_client_set_header(client, "Content-Type", "application/json");
   esp_http_client_set_post_field(client, body, strlen(body));
 
+  int64_t trigger_start=esp_timer_get_time();
   esp_err_t result = esp_http_client_perform(client);
+  trigger_us=esp_timer_get_time()-trigger_start;
   int status = esp_http_client_get_status_code(client);
   esp_http_client_cleanup(client);
 
@@ -191,20 +211,28 @@ static void task(void *arg) {
   start = esp_timer_get_time();
   int64_t last = start, last_data=start;
   unsigned prior_bytes=0;
+  int64_t last_yield=start, next_marker_check=start;
 
   while (!atomic_load(&cancel) && esp_timer_get_time() - start < 840000000 &&
          connected()) {
     int64_t now = esp_timer_get_time();
 
-    if (ftp_run((now - last) / 1000) < 0)
-      break;
+    int run_result=ftp_run((now-last)/1000);
+    unsigned run_duration=esp_timer_get_time()-now;
+    atomic_fetch_add(&loop_calls,1);atomic_fetch_add(&loop_us,run_duration);
+    if(run_duration>atomic_load(&loop_max_us))loop_max_us=run_duration;
+    if(run_result<0)break;
     last = now;
     unsigned bytes=pearl_ftp_received_bytes();
-    if(bytes!=prior_bytes) { last_data=now;prior_bytes=bytes; }
+    bool made_progress=bytes!=prior_bytes;
+    if(made_progress) { last_data=now;prior_bytes=bytes; }
     transferred=bytes;quiet=(now-last_data)/1000000;
     elapsed=(now-session_start)/1000000;
 
-    FILE *failed = ftp_getstate() == E_FTP_STE_READY
+    bool check_markers=now>=next_marker_check && ftp_getstate()==E_FTP_STE_READY;
+    if(check_markers)next_marker_check=now+1000000;
+    int64_t marker_start=esp_timer_get_time();
+    FILE *failed = check_markers
                        ? fopen("/sdcard/music/.pearl/error.txt", "rb") : NULL;
     if (failed) {
       char reason[32] = {0};
@@ -212,10 +240,11 @@ static void task(void *arg) {
       fclose(failed);
       break;
     }
-    FILE *ready = ftp_getstate() == E_FTP_STE_READY
+    FILE *ready = check_markers
                       ? fopen("/sdcard/music/.pearl/ready", "rb")
                       : NULL;
 
+    atomic_fetch_add(&marker_us,(unsigned)(esp_timer_get_time()-marker_start));
     if (ready) {
       char sha[67] = {0};
       bool read = fgets(sha, sizeof(sha), ready) != NULL;
@@ -233,7 +262,13 @@ static void task(void *arg) {
       }
       break;
     }
-    vTaskDelay(pdMS_TO_TICKS(5));
+    /* Drain ready data without a sleep after every chunk. Yield on idle,
+     * or every 20 ms while busy so UI/control tasks keep running. */
+    if(!made_progress || esp_timer_get_time()-last_yield>=20000) {
+      int64_t before=esp_timer_get_time();vTaskDelay(1);
+      atomic_fetch_add(&yield_us,(unsigned)(esp_timer_get_time()-before));
+      last_yield=esp_timer_get_time();
+    }
   }
   if (!success && !card_full && !connected()) failure=14;
   else if (!success && esp_timer_get_time()-start>=840000000) failure=15;
@@ -259,6 +294,8 @@ void pearl_sync_start(void) {
     return;
   cancel = false;
   elapsed=quiet=transferred=0;
+  tx_before=tx_after=-1;tx_result=ps_result=0;
+  loop_us=loop_max_us=loop_calls=yield_us=connect_us=discovery_us=trigger_us=marker_us=network_us=0;
   pearl_ftp_reset_progress();
   stage=1;
 

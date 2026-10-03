@@ -168,7 +168,7 @@ HIFI版本所有IO
 #define CST820_ID   2
 #define CHSC6417_ID 3
 
-#define EXAMPLE_LVGL_BUF_HEIGHT        24 /* Two 22 KiB DMA buffers; leave internal RAM for audio/WiFi. */
+#define EXAMPLE_LVGL_BUF_HEIGHT        12 /* Two 11 KiB DMA buffers; reserve RAM for SD/WiFi. */
 #define EXAMPLE_LVGL_TICK_PERIOD_MS    2
 #define EXAMPLE_LVGL_TASK_MAX_DELAY_MS 500
 #define EXAMPLE_LVGL_TASK_MIN_DELAY_MS 1
@@ -653,12 +653,19 @@ void app_main(void)
 
 static void library_task(void *arg)
 {
-    sdmmc_host_t host=SDMMC_HOST_DEFAULT();host.max_freq_khz=SDMMC_FREQ_DEFAULT;
+    sdmmc_host_t host=SDMMC_HOST_DEFAULT();host.max_freq_khz=SDMMC_FREQ_HIGHSPEED;
+    /* ESP32-S3 SDMMC cannot DMA from PSRAM. The zero default otherwise
+     * turns each buffered write into individual 512-byte card commands. */
+    void *sd_dma=heap_caps_malloc(8192,MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL);
+    host.dma_aligned_buffer=sd_dma;
+    host.unaligned_multi_block_rw_max_chunk_size=16;
     sdmmc_slot_config_t slot=SDMMC_SLOT_CONFIG_DEFAULT();slot.width=4;
     slot.clk=16;slot.cmd=17;slot.d0=15;slot.d1=14;slot.d2=21;slot.d3=18;
     slot.flags|=SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
     esp_vfs_fat_sdmmc_mount_config_t cfg={.format_if_mount_failed=false,.max_files=12,.allocation_unit_size=16384};
     sdmmc_card_t *card=NULL;esp_err_t e=esp_vfs_fat_sdmmc_mount("/sdcard",&host,&slot,&cfg,&card);
+    if(e!=ESP_OK){free(sd_dma);sd_dma=NULL;}
+    else ESP_LOGW("pearl","SDMMC actual_khz=%d bus_width=%d sector=%d bounce_bytes=%u chunk_sectors=%u",card->real_freq_khz,card->log_bus_width==2?4:1,card->csd.sector_size,sd_dma?8192u:0u,16u);
     const char *err="";
     if(e!=ESP_OK)err="Card not ready. Insert a FAT32 card and restart.";
     else if(pearl_library_scan(&music,"/sdcard/music"))err="Add a music folder to your card, then restart.";

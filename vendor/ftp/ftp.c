@@ -82,9 +82,26 @@ static uint8_t ftp_stop = 0;
  ******************************************************************************/
 static ftp_data_t ftp_data = {0};
 #include <stdatomic.h>
-static atomic_uint received_bytes;
+#ifdef PEARL_FTP_HOST
+#include <time.h>
+static uint64_t trace_clock(void) { struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (uint64_t)t.tv_sec*1000000+t.tv_nsec/1000; }
+#else
+#include "esp_timer.h"
+static uint64_t trace_clock(void) { return esp_timer_get_time(); }
+#endif
+static atomic_int trace_state,trace_substate;
+static atomic_uint reply_count,last_reply;
+static atomic_uint received_bytes,receive_calls,receive_us,receive_max_us,write_calls,write_us,write_max_us,flush_us,empty_reads;
+static bool file_failed;
+static void *file_buffer;
+static void trace_max(atomic_uint *value,unsigned n) { if(n>atomic_load(value))atomic_store(value,n); }
 unsigned pearl_ftp_received_bytes(void) { return atomic_load(&received_bytes); }
-void pearl_ftp_reset_progress(void) { atomic_store(&received_bytes,0); }
+void pearl_ftp_reset_progress(void) {
+ received_bytes=receive_calls=receive_us=receive_max_us=write_calls=write_us=write_max_us=flush_us=empty_reads=reply_count=last_reply=0;
+}
+void pearl_ftp_trace(char *out,unsigned size) {
+ snprintf(out,size,"state=%d substate=%d replies=%u last_reply=%u bytes=%u reads=%u recv_us=%u recv_max_us=%u empty=%u writes=%u write_us=%u write_max_us=%u flush_us=%u",atomic_load(&trace_state),atomic_load(&trace_substate),atomic_load(&reply_count),atomic_load(&last_reply),atomic_load(&received_bytes),atomic_load(&receive_calls),atomic_load(&receive_us),atomic_load(&receive_max_us),atomic_load(&empty_reads),atomic_load(&write_calls),atomic_load(&write_us),atomic_load(&write_max_us),atomic_load(&flush_us));
+}
 static char *ftp_path = NULL;
 static char *ftp_scratch_buffer = NULL;;
 static char *ftp_cmd_buffer = NULL;
@@ -127,6 +144,11 @@ static bool ftp_open_file (const char *path, const char *mode) {
 		ESP_LOGE(FTP_TAG, "ftp_open_file: open fail [%s]", fullname);
 		return false;
 	}
+    /* Explicit PSRAM buffering batches small TCP reads into large FAT writes. */
+    if(setvbuf(ftp_data.fp,file_buffer,_IOFBF,32768)!=0) {
+        fclose(ftp_data.fp);ftp_data.fp=NULL;return false;
+    }
+    file_failed=false;
 	ftp_data.e_open = E_FTP_FILE_OPEN;
 	return true;
 }
@@ -134,7 +156,9 @@ static bool ftp_open_file (const char *path, const char *mode) {
 //--------------------------------------
 static void ftp_close_files_dir (void) {
 	if (ftp_data.e_open == E_FTP_FILE_OPEN) {
-		fclose(ftp_data.fp);
+        uint64_t before=trace_clock();
+        if(fclose(ftp_data.fp)!=0)file_failed=true;
+        atomic_fetch_add(&flush_us,(unsigned)(trace_clock()-before));
 		ftp_data.fp = NULL;
 	}
 	else if (ftp_data.e_open == E_FTP_DIR_OPEN) {
@@ -177,7 +201,10 @@ static ftp_result_t ftp_read_file (char *filebuf, uint32_t desiredsize, uint32_t
 //-----------------------------------------------------------------
 static ftp_result_t ftp_write_file (char *filebuf, uint32_t size) {
 	ftp_result_t result = E_FTP_RESULT_FAILED;
-	uint32_t actualsize = fwrite(filebuf, 1, size, ftp_data.fp);
+	uint64_t before=trace_clock();
+    uint32_t actualsize = fwrite(filebuf, 1, size, ftp_data.fp);
+    unsigned duration=trace_clock()-before;
+    atomic_fetch_add(&write_calls,1);atomic_fetch_add(&write_us,duration);trace_max(&write_max_us,duration);
     atomic_fetch_add(&received_bytes,actualsize);
 	if (actualsize == size) {
 		result = E_FTP_RESULT_OK;
@@ -382,7 +409,7 @@ static ftp_result_t ftp_wait_for_connection (int32_t l_sd, int32_t *n_sd, uint32
 
 	// enable non-blocking mode if not data channel connection
 	uint32_t option = fcntl(_sd, F_GETFL, 0);
-	if (l_sd != ftp_data.ld_sd) option |= O_NONBLOCK;
+	option |= O_NONBLOCK; /* Data reads must not block cancellation or timeout checks. */
 	fcntl(_sd, F_SETFL, option);
 
 	// client connected, so go on
@@ -399,13 +426,13 @@ static void ftp_send_reply (uint32_t status, char *message) {
 	strcat ((char *)ftp_cmd_buffer, message);
 	strcat ((char *)ftp_cmd_buffer, "\r\n");
 
+    atomic_fetch_add(&reply_count,1);last_reply=status;
 	int32_t timeout = 200;
 	ftp_result_t result;
 	//uint32_t size = strlen((char *)ftp_cmd_buffer);
 	size_t size = strlen((char *)ftp_cmd_buffer);
 
 	ESP_LOGI(FTP_TAG, "Send reply: [%.*s]", size-2, ftp_cmd_buffer);
-	vTaskDelay(1);
 
 	while (1) {
 		result = send(ftp_data.c_sd, ftp_cmd_buffer, size, 0);
@@ -424,7 +451,6 @@ static void ftp_send_reply (uint32_t status, char *message) {
 				ftp_data.d_sd = -1;
 				ftp_close_filesystem_on_error();
 			}
-			vTaskDelay(1);
 			ESP_LOGI(FTP_TAG, "Send reply: OK (%u)", size);
 			break;
 		}
@@ -448,12 +474,10 @@ static void ftp_send_list(uint32_t datasize)
 	ftp_result_t result;
 
 	ESP_LOGI(FTP_TAG, "Send list data: (%"PRIu32")", datasize);
-	vTaskDelay(1);
 
 	while (1) {
 		result = send(ftp_data.d_sd, ftp_data.dBuffer, datasize, 0);
 		if (result == datasize) {
-			vTaskDelay(1);
 			ESP_LOGI(FTP_TAG, "Send OK");
 			break;
 		}
@@ -477,12 +501,10 @@ static void ftp_send_file_data(uint32_t datasize)
 	uint32_t timeout = 200;
 
 	ESP_LOGI(FTP_TAG, "Send file data: (%"PRIu32")", datasize);
-	vTaskDelay(1);
 
 	while (1) {
 		result = send(ftp_data.d_sd, ftp_data.dBuffer, datasize, 0);
 		if (result == datasize) {
-			vTaskDelay(1);
 			ESP_LOGI(FTP_TAG, "Send OK");
 			break;
 		}
@@ -504,9 +526,15 @@ static ftp_result_t ftp_recv_non_blocking (int32_t sd, void *buff, int32_t Maxle
 {
 	if (sd < 0) return E_FTP_RESULT_FAILED;
 
-	*rxLen = recv(sd, buff, Maxlen, 0);
-	if (*rxLen > 0) return E_FTP_RESULT_OK;
-	else if (errno != EAGAIN) return E_FTP_RESULT_FAILED;
+    uint64_t before=trace_clock();
+    *rxLen = recv(sd, buff, Maxlen, 0);
+    if(sd==ftp_data.d_sd) {
+        unsigned duration=trace_clock()-before;
+        atomic_fetch_add(&receive_calls,1);atomic_fetch_add(&receive_us,duration);trace_max(&receive_max_us,duration);
+        if(*rxLen<0 && (errno==EAGAIN||errno==EWOULDBLOCK))atomic_fetch_add(&empty_reads,1);
+    }
+    if (*rxLen > 0) return E_FTP_RESULT_OK;
+    if (*rxLen == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) return E_FTP_RESULT_FAILED;
 
 	return E_FTP_RESULT_CONTINUE;
 }
@@ -859,7 +887,6 @@ static void ftp_process_cmd (void) {
 			if ((strlen(ftp_path) > 0) && (ftp_path[strlen(ftp_path)-1] != '/')) {
 				if (ftp_open_file(ftp_path, "rb")) {
 					ftp_data.state = E_FTP_STE_CONTINUE_FILE_TX;
-					vTaskDelay(20 / portTICK_PERIOD_MS);
 					ftp_send_reply(150, NULL);
 				}
 				else {
@@ -879,7 +906,6 @@ static void ftp_process_cmd (void) {
 			if ((strlen(ftp_path) > 0) && (ftp_path[strlen(ftp_path)-1] != '/')) {
 				if (ftp_open_file(ftp_path, "ab")) {
 					ftp_data.state = E_FTP_STE_CONTINUE_FILE_RX;
-					vTaskDelay(20 / portTICK_PERIOD_MS);
 					ftp_send_reply(150, NULL);
 				}
 				else {
@@ -900,7 +926,6 @@ static void ftp_process_cmd (void) {
 				ESP_LOGI(FTP_TAG, "E_FTP_CMD_STOR ftp_path=[%s]", ftp_path);
 				if (ftp_open_file(ftp_path, "wb")) {
 					ftp_data.state = E_FTP_STE_CONTINUE_FILE_RX;
-					vTaskDelay(20 / portTICK_PERIOD_MS);
 					ftp_send_reply(150, NULL);
 				}
 				else {
@@ -923,7 +948,6 @@ static void ftp_process_cmd (void) {
 
 				//if (unlink(ftp_path) == 0) {
 				if (unlink(fullname) == 0) {
-					vTaskDelay(20 / portTICK_PERIOD_MS);
 					ftp_send_reply(250, NULL);
 				}
 				else ftp_send_reply(550, NULL);
@@ -940,7 +964,6 @@ static void ftp_process_cmd (void) {
 
 				//if (rmdir(ftp_path) == 0) {
 				if (rmdir(fullname) == 0) {
-					vTaskDelay(20 / portTICK_PERIOD_MS);
 					ftp_send_reply(250, NULL);
 				}
 				else ftp_send_reply(550, NULL);
@@ -957,7 +980,6 @@ static void ftp_process_cmd (void) {
 
 				//if (mkdir(ftp_path, 0755) == 0) {
 				if (mkdir(fullname, 0755) == 0) {
-					vTaskDelay(20 / portTICK_PERIOD_MS);
 					ftp_send_reply(250, NULL);
 				}
 				else ftp_send_reply(550, NULL);
@@ -1036,6 +1058,8 @@ static void ftp_wait_for_enabled (void) {
 
 //---------------------
 void ftp_deinit(void) {
+	if(file_buffer) free(file_buffer);
+    file_buffer=NULL;
 	if (ftp_path) free(ftp_path);
 	if (ftp_cmd_buffer) free(ftp_cmd_buffer);
 	if (ftp_data.dBuffer) free(ftp_data.dBuffer);
@@ -1055,13 +1079,15 @@ bool ftp_init(void) {
 	memset(&ftp_data, 0, sizeof(ftp_data_t));
     #ifdef PEARL_FTP_HOST
     ftp_data.dBuffer=malloc(ftp_buff_size+1);
+    file_buffer=malloc(32768);
 #else
     ftp_data.dBuffer=heap_caps_malloc(ftp_buff_size+1,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    file_buffer=heap_caps_malloc(32768,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
 #endif
     ftp_path=malloc(FTP_MAX_PARAM_SIZE);
     ftp_scratch_buffer=malloc(FTP_MAX_PARAM_SIZE);
     ftp_cmd_buffer=malloc(FTP_MAX_PARAM_SIZE+FTP_CMD_SIZE_MAX+1);
-    if(!ftp_data.dBuffer||!ftp_path||!ftp_scratch_buffer||!ftp_cmd_buffer){ftp_deinit();return false;}
+    if(!file_buffer||!ftp_data.dBuffer||!ftp_path||!ftp_scratch_buffer||!ftp_cmd_buffer){ftp_deinit();return false;}
 
 	//SOCKETFIFO_Init((void *)ftp_fifoelements, FTP_SOCKETFIFO_ELEMENTS_MAX);
 
@@ -1081,6 +1107,7 @@ bool ftp_init(void) {
 int ftp_run (uint32_t elapsed)
 {
 	//if (xSemaphoreTake(ftp_mutex, FTP_MUTEX_TIMEOUT_MS / portTICK_PERIOD_MS) !=pdTRUE) return -1;
+    trace_state=ftp_data.state;trace_substate=ftp_data.substate;
 	if (ftp_stop) return -2;
 
 	ftp_data.dtimeout += elapsed;
@@ -1193,7 +1220,7 @@ int ftp_run (uint32_t elapsed)
 				else {
 					// File received (E_FTP_RESULT_FAILED)
 					ftp_close_files_dir();
-					ftp_send_reply(226, NULL);
+                    ftp_send_reply(file_failed||len<0?451:226, NULL);
 					ftp_data.state = E_FTP_STE_END_TRANSFER;
 					ESP_LOGI(FTP_TAG, "File received (%"PRIu32" bytes in %"PRIu32" msec).", ftp_data.total, ftp_data.time);
 					break;

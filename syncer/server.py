@@ -29,7 +29,9 @@ def main():
         while True:
             state['publisher']='preparing'
             try:
+                before=time.monotonic()
                 head=publish(server,a.source_root,a.music,a.cache)
+                state['publication_ms']=round((time.monotonic()-before)*1000,2)
                 state.update(publisher='ready',source_checked_at=int(time.time()),published_catalog=head['catalog'])
             except Exception as e:
                 state.update(publisher='error',publication_error=type(e).__name__)
@@ -39,7 +41,8 @@ def main():
         try:
             head=json.loads((a.cache/'head.json').read_text())
             state['status']='transferring'
-            sha=deliver(a.cache,head,address,port,free_bytes=free_bytes)
+            state['transfer_trace']={}
+            sha=deliver(a.cache,head,address,port,free_bytes=free_bytes,trace=lambda metrics:state.update(transfer_trace=metrics))
             state.update(status='uploaded',catalog=sha)
         except Exception as e:
             state.update(status='error',error=type(e).__name__)
