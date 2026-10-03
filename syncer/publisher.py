@@ -28,7 +28,10 @@ def publish(server, source_root, local_root, cache):
         # Absolute /music paths are portable across host and Pod mount points.
         data=('#EXTM3U\n'+'\n'.join('/music/.pearl/objects/'+prepared[k]['track'] for k in playlist['entries'])+'\n').encode()
         name=store_bytes(objects,data,'.m3u8')
-        records.append({'playlist':name,'title':playlist['title'],'id':playlist['id']})
+        display=playlist['title'].encode()[:159].decode('utf-8',errors='ignore')
+        records.append({'playlist':name,'title':display,'full_title':playlist['title'],'id':playlist['id']})
+    if canonical(snapshot(server,source_root,local_root)) != canonical(selected):
+        raise ValueError('Plex selection changed during preparation')
     required=set()
     for record in records:
         if 'playlist' in record: required.add(record['playlist']); continue
@@ -36,7 +39,7 @@ def publish(server, source_root, local_root, cache):
         if record['art']: required.add(record['art'])
         for lyric in record['lyrics']: required.update((lyric['file'],lyric['original']))
     files=[{'file':name,'bytes':(objects/name).stat().st_size} for name in sorted(required)]
-    data=b''.join(canonical(row)+b'\n' for row in files+records)
+    data=b''.join(canonical(row)+b'\n' for row in [{'format':1}]+files+records)
     if len(data)>512*1024 or any(len(line)>4095 for line in data.splitlines()): raise ValueError('Catalog limits exceeded')
     sha=hashlib.sha256(data).hexdigest()
     generations=cache/'catalogs'; generations.mkdir(exist_ok=True)

@@ -1,4 +1,6 @@
 """Single-session lftp delivery; completion marker is uploaded last."""
+import ftplib
+import io
 import ipaddress
 import json
 import os
@@ -15,7 +17,51 @@ def quote(value):
     return '"'+value.replace('\\','\\\\').replace('"','\\"').replace('$','\\$').replace('`','\\`')+'"'
 
 
-def deliver(cache, head, address, port=21, timeout=840):
+def inventory(address, port):
+    """One bounded FTP listing, avoiding one request per object."""
+    found = {}
+    with ftplib.FTP() as ftp:
+        ftp.connect(str(address), port, timeout=15)
+        ftp.login()
+        def entry(line):
+            fields=line.split(None,8)
+            if len(fields)!=9 or not fields[0].startswith('-'):return
+            name=fields[8]
+            if not re.fullmatch(r'[a-f0-9]{64}\.(mp3|jpg|lrc|srt|vtt|txt|m3u8)',name):return
+            size=int(fields[4])
+            if size<0:raise ValueError('Invalid inventory size')
+            found[name]=size
+            if len(found)>16384:raise ValueError('Inventory too large')
+        try:ftp.retrlines('LIST /objects',entry)
+        except ftplib.error_perm as e:
+            if not str(e).startswith('550'):raise
+        ftp.quit()
+    return found
+
+
+class CapacityError(OSError):
+    pass
+
+
+def report_failure(address, port, reason):
+    """A small terminal marker lets the Pod stop WiFi promptly on host failure."""
+    if reason not in ('card_full','transfer_failed'):raise ValueError('Invalid failure')
+    with ftplib.FTP() as ftp:
+        ftp.connect(str(address),port,timeout=5);ftp.login()
+        ftp.storbinary('STOR /error.txt',io.BytesIO((reason+'\n').encode()))
+        ftp.quit()
+
+
+def capacity(required, existing, free_bytes, catalog_bytes):
+    # Full mismatched files are budgeted conservatively; active assets are never deleted.
+    missing=[(name,size) for name,size in required.items() if existing.get(name)!=size]
+    needed=sum(size+32768 for _,size in missing)+catalog_bytes+4*1024*1024
+    if type(free_bytes) is not int or free_bytes<0:raise ValueError('Invalid free space')
+    if needed>free_bytes:raise CapacityError('Insufficient card space')
+    return needed
+
+
+def deliver(cache, head, address, port=21, timeout=840, free_bytes=None):
     ip=ipaddress.ip_address(address)
     if ip.version!=4 or not ip.is_private or ip.is_loopback or ip.is_multicast or ip.is_unspecified:
         raise ValueError('Expected a local Pod IPv4 address')
@@ -23,6 +69,12 @@ def deliver(cache, head, address, port=21, timeout=840):
     sha=head['catalog']
     if not re.fullmatch('[a-f0-9]{64}',sha): raise ValueError('Invalid catalog hash')
     catalog=cache/'catalogs'/sha
+    if free_bytes is not None:
+        required={}
+        for line in catalog.read_text().splitlines():
+            record=json.loads(line)
+            if 'file' in record:required[record['file']]=record['bytes']
+        capacity(required,inventory(ip,port),free_bytes,catalog.stat().st_size)
     with tempfile.TemporaryDirectory(dir=cache,prefix='delivery-') as directory:
         staged=Path(directory)/'objects';staged.mkdir()
         for line in catalog.read_text().splitlines():

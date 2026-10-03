@@ -1,5 +1,13 @@
 #include "lyrics.h"
 #include <stdio.h>
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#define lyric_malloc(n) heap_caps_malloc((n), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+#define lyric_calloc(n,s) heap_caps_calloc((n),(s), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+#else
+#define lyric_malloc malloc
+#define lyric_calloc calloc
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -22,7 +30,7 @@ bool pearl_lyrics_load(const char *path, pearl_lyrics *l) {
   FILE *f = fopen(path, "rb");
   if (!f)
     return false;
-  l->text = malloc(st.st_size + 1);
+  l->text = lyric_malloc(st.st_size + 1);
   if (!l->text) {
     fclose(f);
     return false;
@@ -37,7 +45,7 @@ bool pearl_lyrics_load(const char *path, pearl_lyrics *l) {
   const char *ext = strrchr(path, '.');
   if (!ext || strcmp(ext, ".lrc"))
     return true;
-  l->cues = calloc(4096, sizeof(*l->cues));
+  l->cues = lyric_calloc(4096, sizeof(*l->cues));
   if (!l->cues) {
     pearl_lyrics_free(l);
     return false;
@@ -54,9 +62,7 @@ bool pearl_lyrics_load(const char *path, pearl_lyrics *l) {
     }
     if (!strncmp(line, "[offset:", 8))
       offset = atoi(line + 8);
-    char *p = line, *words = strrchr(line, ']');
-    if (words)
-      words++;
+    char *p = line;
     unsigned added = l->count;
     while (*p == '[') {
       unsigned minute, second;
@@ -75,14 +81,18 @@ bool pearl_lyrics_load(const char *path, pearl_lyrics *l) {
         while (digits++ < 3)
           fraction *= 10;
       }
-      if (*p != ']' || !words || strlen(words) > 1024 || l->count >= 4096) {
+      if (*p != ']' || l->count >= 4096) {
         pearl_lyrics_free(l);
         return false;
       }
       p++;
       int64_t ms = (int64_t)minute * 60000 + second * 1000 + fraction + offset;
       l->cues[l->count++] =
-          (pearl_cue){.milliseconds = ms < 0 ? 0 : (uint32_t)ms, .text = words};
+          (pearl_cue){.milliseconds = ms < 0 ? 0 : (uint32_t)ms, .text = NULL};
+    }
+    if (l->count > added) {
+      if (strlen(p) > 1024) { pearl_lyrics_free(l); return false; }
+      for (unsigned i = added; i < l->count; i++) l->cues[i].text = p;
     }
     if (added == l->count && line[0] != '[' && line[0]) {
       pearl_lyrics_free(l);

@@ -2,6 +2,7 @@
 #include "esp_http_client.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
+#include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "ftp.h"
@@ -26,7 +27,8 @@ static const char *messages[] = {"Sync is off",
                                  "Checking update...",
                                  "Synced!",
                                  "Sync failed. Existing music kept.",
-                                 "Pause music, then sync again."};
+                                 "Pause music, then sync again.",
+                                 "Card full. Existing music kept."};
 
 void pearl_sync_status(char *out, unsigned size) {
   snprintf(out, size, "%s", messages[atomic_load(&stage)]);
@@ -56,7 +58,7 @@ static __attribute__((noinline)) bool connected(void) {
 }
 static void task(void *arg) {
   (void)arg;
-  bool ftp = false, dns = false, success = false;
+  bool ftp = false, dns = false, success = false, card_full = false;
   stage = 1;
   pearl_network_connect();
 
@@ -113,8 +115,10 @@ static void task(void *arg) {
   mkdir("/sdcard/music/.pearl/objects", 0755);
   mkdir("/sdcard/music/.pearl/catalogs", 0755);
 
+  pearl_managed_collect();
   unlink("/sdcard/music/.pearl/ready");
   unlink("/sdcard/music/.pearl/ready.tmp");
+  unlink("/sdcard/music/.pearl/error.txt");
 
   if (!ftp_init())
     goto done;
@@ -144,7 +148,14 @@ static void task(void *arg) {
   if (!client)
     goto done;
 
-  const char *body = "{\"ftp_port\":2121}";
+  uint64_t total = 0, available = 0;
+  if (esp_vfs_fat_info("/sdcard", &total, &available) != ESP_OK) {
+    esp_http_client_cleanup(client);
+    goto done;
+  }
+  char body[96];
+  snprintf(body, sizeof(body), "{\"ftp_port\":2121,\"free_bytes\":%llu}",
+           (unsigned long long)available);
   esp_http_client_set_method(client, HTTP_METHOD_POST);
   esp_http_client_set_header(client, "Content-Type", "application/json");
   esp_http_client_set_post_field(client, body, strlen(body));
@@ -168,6 +179,14 @@ static void task(void *arg) {
       break;
     last = now;
 
+    FILE *failed = ftp_getstate() == E_FTP_STE_READY
+                       ? fopen("/sdcard/music/.pearl/error.txt", "rb") : NULL;
+    if (failed) {
+      char reason[32] = {0};
+      card_full = fgets(reason, sizeof(reason), failed) && !strncmp(reason, "card_full", 9);
+      fclose(failed);
+      break;
+    }
     FILE *ready = ftp_getstate() == E_FTP_STE_READY
                       ? fopen("/sdcard/music/.pearl/ready", "rb")
                       : NULL;
@@ -184,6 +203,7 @@ static void task(void *arg) {
 
       if (read && pearl_audio_state().paused && pearl_managed_activate(sha)) {
         success = true;
+        pearl_managed_collect();
         pearl_library_rescan();
       }
       break;
@@ -198,7 +218,7 @@ done:
     mdns_free();
 
   pearl_network_off();
-  stage = success ? 5 : 6;
+  stage = success ? 5 : card_full ? 8 : 6;
   busy = false;
   vTaskDelete(NULL);
 }

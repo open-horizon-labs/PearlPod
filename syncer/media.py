@@ -11,6 +11,35 @@ from mutagen.id3 import ID3, APIC, TIT2, TPE1, TPE2, TALB, TRCK, TPOS, TCON, TYE
 
 PROFILE = 'mp3-256k-48k-id3v23-cover480-v2'
 LIMIT = 256 * 1024
+_verified = {}
+
+def fingerprint(path):
+    st=path.stat()
+    return [st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns]
+
+def unchanged_digest(path):
+    key=str(path.resolve());state=fingerprint(path)
+    saved=_verified.get(key)
+    if saved and saved[0]==state:return saved[1]
+    value=digest(path)
+    if fingerprint(path)!=state:raise ValueError('File changed while hashing')
+    if len(_verified)>=16384:_verified.clear()
+    _verified[key]=(state,value)
+    return value
+
+def source_digest(source,cache):
+    # Persistent stat-keyed source identity avoids rereading the entire NAS every minute.
+    directory=cache/'sources';directory.mkdir(exist_ok=True)
+    key=hashlib.sha256(str(source.resolve()).encode()).hexdigest()
+    memo=directory/(key+'.json');state=fingerprint(source)
+    if memo.exists():
+        stored=json.loads(memo.read_text())
+        if stored.get('stat')==state and re.fullmatch('[a-f0-9]{64}',stored.get('sha','')):return stored['sha']
+    value=unchanged_digest(source)
+    temporary=memo.with_suffix('.tmp')
+    temporary.write_text(json.dumps({'stat':state,'sha':value}))
+    temporary.replace(memo)
+    return value
 
 
 def digest(path):
@@ -57,6 +86,7 @@ def normalize_lyrics(raw, suffix):
     if len(raw) > LIMIT: raise ValueError('Lyrics too large')
     text = raw.decode('utf-8-sig') if not raw.startswith((b'\xff\xfe', b'\xfe\xff')) else raw.decode('utf-16')
     text = text.replace('\r\n', '\n').replace('\r', '\n')
+    if '\x00' in text:raise ValueError('NUL in lyrics')
     cues = []
     if suffix == '.lrc':
         offset = 0
@@ -64,7 +94,8 @@ def normalize_lyrics(raw, suffix):
         if m: offset = int(m.group(1))
         for line in text.splitlines():
             times = re.findall(r'\[(\d+):(\d{2})(?:[.:](\d{1,3}))?\]', line)
-            lyric = re.sub(r'\[[^]]*\]|<\d+:\d+(?:\.\d+)?>', '', line).strip()
+            lyric = re.sub(r'^(?:\[\d+:\d{2}(?:[.:]\d{1,3})?\])+', '', line)
+            lyric = re.sub(r'<\d+:\d+(?:\.\d+)?>', '', lyric).strip()
             for minute, second, fraction in times:
                 if int(second) >= 60: raise ValueError('Invalid LRC timestamp')
                 stamp = max(0, int(minute)*60000+int(second)*1000+int((fraction or '').ljust(3, '0') or 0)+offset)
@@ -124,7 +155,7 @@ def lyric_sources(path, media):
 def store_bytes(objects, data, extension):
     name = hashlib.sha256(data).hexdigest() + extension
     target = objects / name
-    if not target.exists() or digest(target) != name[:64]:
+    if not target.exists() or unchanged_digest(target) != name[:64]:
         temporary = target.with_suffix(target.suffix+'.tmp')
         with temporary.open('wb') as out:
             out.write(data); out.flush(); __import__('os').fsync(out.fileno())
@@ -150,7 +181,7 @@ def prepare(track, cache, plex_cover=b''):
         extension, normalized = normalize_lyrics(raw, suffix)
         delivery = store_bytes(objects, normalized, extension)
         lyrics.append({'language': language, 'file': delivery, 'original': original})
-    source_hash = digest(source)
+    source_hash = source_digest(source,cache)
     signature = hashlib.sha256(canonical({'source': source_hash, 'profile': PROFILE,
         'metadata': {k: metadata.get(k) for k in ('title','artist','album','album_artist','album_id','track','disc','genres','year')},
         'cover': hashlib.sha256(art).hexdigest()})).hexdigest()
@@ -158,7 +189,7 @@ def prepare(track, cache, plex_cover=b''):
     memo = mappings / (signature + '.json')
     if memo.exists():
         name = json.loads(memo.read_text())['audio']
-        if not (objects/name).is_file() or digest(objects/name) != name[:64]: memo.unlink()
+        if not (objects/name).is_file() or unchanged_digest(objects/name) != name[:64]: memo.unlink()
     if not memo.exists():
         temp = objects / (signature + '.preparing.mp3')
         codec = ['-c:a','copy'] if source.suffix.lower()=='.mp3' else ['-c:a','libmp3lame','-b:a','256k','-ar','48000','-ac','2']

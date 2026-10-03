@@ -86,6 +86,7 @@ static ftp_data_t ftp_data = {0};
 static char *ftp_path = NULL;
 static char *ftp_scratch_buffer = NULL;;
 static char *ftp_cmd_buffer = NULL;
+static char listing_path[256];
 static uint8_t ftp_nlist = 0;
 static const ftp_cmd_t ftp_cmd_table[] = { { "FEAT" }, { "SYST" }, { "CDUP" }, { "CWD"	},
 										   { "PWD"	}, { "XPWD" }, { "SIZE" }, { "MDTM" },
@@ -115,8 +116,8 @@ static void stoupper (char *str) {
 static bool ftp_open_file (const char *path, const char *mode) {
 	ESP_LOGI(FTP_TAG, "ftp_open_file: path=[%s]", path);
 	char fullname[256];
-	strcpy(fullname, MOUNT_POINT);
-	strcat(fullname, path);
+	if(snprintf(fullname,sizeof(fullname),"%s%s",MOUNT_POINT,path)>=(int)sizeof(fullname))return E_FTP_RESULT_FAILED;
+    snprintf(listing_path,sizeof(listing_path),"%s",fullname);
 	ESP_LOGI(FTP_TAG, "ftp_open_file: fullname=[%s]", fullname);
 	//ftp_data.fp = fopen(path, mode);
 	ftp_data.fp = fopen(fullname, mode);
@@ -191,8 +192,8 @@ static ftp_result_t ftp_open_dir_for_listing (const char *path) {
 	}
 	ESP_LOGI(FTP_TAG, "ftp_open_dir_for_listing path=[%s] MOUNT_POINT=[%s]", path, MOUNT_POINT);
 	char fullname[256];
-	strcpy(fullname, MOUNT_POINT);
-	strcat(fullname, path);
+	if(snprintf(fullname,sizeof(fullname),"%s%s",MOUNT_POINT,path)>=(int)sizeof(fullname))return E_FTP_RESULT_FAILED;
+    snprintf(listing_path,sizeof(listing_path),"%s",fullname);
 	ESP_LOGI(FTP_TAG, "ftp_open_dir_for_listing: %s", fullname);
 	ftp_data.dp = opendir(fullname);  // Open the directory
 	if (ftp_data.dp == NULL) {
@@ -210,7 +211,7 @@ static int ftp_get_eplf_item (char *dest, uint32_t destsize, struct dirent *de) 
 
 	// Get full file path needed for stat function
 	char fullname[256];
-	if(snprintf(fullname,sizeof(fullname),"%s%s%s%s",MOUNT_POINT,ftp_path,ftp_path[strlen(ftp_path)-1]=='/'?"":"/",de->d_name)>=(int)sizeof(fullname))return 0;
+	if(snprintf(fullname,sizeof(fullname),"%s/%s",listing_path,de->d_name)>=(int)sizeof(fullname))return 0;
 
 	struct stat buf;
 	int res = stat(fullname, &buf);
@@ -230,26 +231,11 @@ static int ftp_get_eplf_item (char *dest, uint32_t destsize, struct dirent *de) 
 	if ((buf.st_mtime + FTP_UNIX_SECONDS_180_DAYS) < now) strftime(str_time, sizeof(str_time), "%b %d %Y", tm_info);
 	else strftime(str_time, 63, "%b %d %H:%M", tm_info);
 
-	int addsize = destsize + 64;
+    int addsize;
+    if (ftp_nlist) addsize = snprintf(dest, destsize, "%s\r\n", de->d_name);
+    else addsize = snprintf(dest, destsize, "%srw-rw-rw-   1 root  root %9"PRIu32" %s %s\r\n", type, (uint32_t)buf.st_size, str_time, de->d_name);
+    if (addsize < 0 || (uint32_t)addsize >= destsize) return 0;
 
-	while (addsize >= destsize) {
-		if (ftp_nlist) addsize = snprintf(dest, destsize, "%s\r\n", de->d_name);
-		else addsize = snprintf(dest, destsize, "%srw-rw-rw-   1 root  root %9"PRIu32" %s %s\r\n", type, (uint32_t)buf.st_size, str_time, de->d_name);
-		if (addsize >= destsize) {
-			ESP_LOGW(FTP_TAG, "Buffer too small, reallocating [%d > %"PRIi32"]", ftp_buff_size, ftp_buff_size + (addsize - destsize) + 64);
-			char *new_dest = realloc(dest, ftp_buff_size + (addsize - destsize) + 65);
-			if (new_dest) {
-				ftp_buff_size += (addsize - destsize) + 64;
-				destsize += (addsize - destsize) + 64;
-				dest = new_dest;
-				addsize = destsize + 64;
-			}
-			else {
-				ESP_LOGE(FTP_TAG, "Buffer reallocation ERROR");
-				addsize = 0;
-			}
-		}
-	}
 	return addsize;
 }
 

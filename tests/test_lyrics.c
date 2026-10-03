@@ -22,6 +22,12 @@ int main(void) {
   fclose(f);
   assert(!pearl_lyrics_load(path, &l));
   assert(!l.text && !l.cues);
+  f = fopen(path, "w");
+  fputs("[00:01.000]Keep [these words] too\n", f);
+  fclose(f);
+  assert(pearl_lyrics_load(path, &l));
+  assert(!strcmp(l.cues[0].text, "Keep [these words] too"));
+  pearl_lyrics_free(&l);
   unlink(path);
   puts("Lyrics timing, repeated stamps, sorting, invalid input and cleanup "
        "pass");

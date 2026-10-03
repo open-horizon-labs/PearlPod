@@ -9,7 +9,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from plexapi.server import PlexServer
 from publisher import publish
-from transfer import deliver
+from transfer import deliver, CapacityError, report_failure
 from zeroconf import Zeroconf, ServiceInfo
 
 
@@ -35,14 +35,16 @@ def main():
                 state.update(publisher='error',publication_error=type(e).__name__)
             time.sleep(60)
     threading.Thread(target=refresh,daemon=True).start()
-    def sync(address,port):
+    def sync(address,port,free_bytes):
         try:
             head=json.loads((a.cache/'head.json').read_text())
             state['status']='transferring'
-            sha=deliver(a.cache,head,address,port)
+            sha=deliver(a.cache,head,address,port,free_bytes=free_bytes)
             state.update(status='uploaded',catalog=sha)
         except Exception as e:
             state.update(status='error',error=type(e).__name__)
+            try:report_failure(address,port,'card_full' if isinstance(e,CapacityError) else 'transfer_failed')
+            except Exception:pass
         finally:gate.release()
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass
@@ -66,11 +68,13 @@ def main():
                 if not ip.is_private or ip.is_loopback:raise ValueError()
                 port=data.get('ftp_port',21)
                 if type(port) is not int or not 1<=port<=65535:raise ValueError()
+                free_bytes=data.get('free_bytes')
+                if free_bytes is not None and (type(free_bytes) is not int or free_bytes<0):raise ValueError()
             except (ValueError,OSError):self.reply(400,{'error':'invalid sync trigger'});return
             if not (a.cache/'head.json').is_file() or state.get('publisher')=='error':self.reply(503,{'error':'library not ready; retry after preparation'});return
             if not gate.acquire(blocking=False):self.reply(409,{'error':'sync busy'});return
             state.pop('error',None);state.update(status='queued')
-            threading.Thread(target=sync,args=(address,port),daemon=True).start()
+            threading.Thread(target=sync,args=(address,port,free_bytes),daemon=True).start()
             self.reply(202,{'status':'queued'})
     http=ThreadingHTTPServer(('0.0.0.0',a.port),Handler);http.daemon_threads=True
     z=Zeroconf()

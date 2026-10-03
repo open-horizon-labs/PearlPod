@@ -34,7 +34,7 @@ static void run(const char *line){
  else if(!strcmp(line,"wifi off"))pearl_network_off();
  else if(!strcmp(line,"wifi status")){pearl_network_state s=pearl_network_snapshot();printf("PEARL wifi enabled=%d setup=%d connected=%d scanning=%d count=%u ip=%s message=%s\n",s.enabled,s.setup,s.connected,s.scanning,s.count,s.ip,s.message);for(unsigned i=0;i<s.count;i++)printf("PEARL AP %s rssi=%d secure=%d\n",s.aps[i].ssid,s.aps[i].rssi,s.aps[i].secure);}
  else if(!strcmp(line,"buttons"))printf("PEARL buttons gpio0=%d gpio47=%d gpio48=%d\n",gpio_get_level(0),gpio_get_level(47),gpio_get_level(48));
- else printf("PEARL commands: status, list, groups, play N, playgroup N P, rescan, pause, next, prev, volume N, buttons, memory, power, wifi setup/scan/connect/off/status\n");
+ else printf("PEARL commands: status, list, groups, play N, playgroup N P, rescan, pause, next, prev, volume N, buttons, memory, power, wifi setup/scan/connect/off/status, sync, sync status, sync source URL\n");
  fflush(stdout);
 }
 static void task(void *arg){char line[256];unsigned n=0;while(1){int c=getchar();if(c==EOF){clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(20));continue;}if(c=='\r'||c=='\n'){if(n){line[n]=0;run(line);n=0;}}else if(n<sizeof(line)-1)line[n++]=c;}}

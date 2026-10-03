@@ -6,6 +6,7 @@
 #endif
 #include "nvs.h"
 #include "playlist.h"
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -158,7 +159,10 @@ static bool catalog(const char *sha, bool full, pearl_library *l,
     const char *name = string(row, "file"), *track = string(row, "track"),
                *playlist = string(row, "playlist");
 
-    if (name) {
+    cJSON *format = cJSON_GetObjectItem(row, "format");
+    if (format) {
+      ok = cJSON_IsNumber(format) && format->valuedouble == 1;
+    } else if (name) {
       cJSON *size = cJSON_GetObjectItem(row, "bytes");
       snprintf(path, sizeof(path), ROOT "/objects/%s",
                object(name) ? name : "invalid");
@@ -296,4 +300,77 @@ bool pearl_managed_load(pearl_library *l, const char *root,
 bool pearl_managed_candidate(pearl_library *l, const char *sha,
                              pearl_add_track_fn add) {
   return catalog(sha, false, l, add);
+}
+
+/* Bloom membership is deliberately conservative: collisions keep extra files,
+ * never delete a referenced one. It bounds RAM independently of library size. */
+#define KEEP_BYTES 32768
+static bool keep_name(unsigned char *keep, const char *name, bool mark) {
+  bool present = true;
+  for (unsigned part = 0; part < 3; part++) {
+    unsigned bit = 0;
+    for (unsigned i = 0; i < 5; i++) {
+      char c = name[part * 20 + i];
+      bit = bit * 16 + (c <= '9' ? c - '0' : c - 'a' + 10);
+    }
+    bit %= KEEP_BYTES * 8;
+    if (mark) keep[bit / 8] |= 1u << (bit % 8);
+    else if (!(keep[bit / 8] & (1u << (bit % 8)))) present = false;
+  }
+  return present;
+}
+static void keep_values(unsigned char *keep, cJSON *value) {
+  for (; value; value = value->next) {
+    if (cJSON_IsString(value) && object(value->valuestring))
+      keep_name(keep, value->valuestring, true);
+    if (value->child) keep_values(keep, value->child);
+  }
+}
+static bool keep_catalog(unsigned char *keep, const char *sha) {
+  if (!sha[0]) return true;
+  /* Refuse cleanup if either retained catalog is damaged or incomplete. */
+  if (!catalog(sha, false, NULL, NULL)) return false;
+  char path[PEARL_PATH];
+  snprintf(path, sizeof(path), ROOT "/catalogs/%s", sha);
+  FILE *f = fopen(path, "rb");
+  if (!f) return false;
+  char *line = malloc(4096);
+  bool ok = line != NULL;
+  while (ok && fgets(line, 4096, f)) {
+    cJSON *row = cJSON_ParseWithOpts(line, NULL, true);
+    if (!row) { ok = false; break; }
+    keep_values(keep, row);
+    cJSON_Delete(row);
+  }
+  if (ferror(f)) ok = false;
+  free(line);
+  fclose(f);
+  return ok;
+}
+bool pearl_managed_collect(void) {
+  activation record;
+  if (!read_activation(&record) || !record.active[0]) return false;
+#ifdef ESP_PLATFORM
+  unsigned char *keep = heap_caps_calloc(1, KEEP_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+  unsigned char *keep = calloc(1, KEEP_BYTES);
+#endif
+  if (!keep) return false;
+  bool ok = keep_catalog(keep, record.active) && keep_catalog(keep, record.previous);
+  if (ok) {
+    DIR *dir = opendir(ROOT "/objects");
+    if (!dir) ok = false;
+    else {
+      struct dirent *entry;
+      while ((entry = readdir(dir))) {
+        if (!object(entry->d_name) || keep_name(keep, entry->d_name, false)) continue;
+        char path[PEARL_PATH];
+        snprintf(path, sizeof(path), ROOT "/objects/%s", entry->d_name);
+        if (unlink(path)) ok = false;
+      }
+      closedir(dir);
+    }
+  }
+  free(keep);
+  return ok;
 }

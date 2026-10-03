@@ -6,14 +6,47 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'syncer'))
-from media import normalize_lyrics, digest
-from transfer import deliver
+from media import normalize_lyrics, digest, source_digest
+from transfer import deliver, capacity, report_failure
 from pyftpdlib.authorizers import DummyAuthorizer
 from pyftpdlib.handlers import FTPHandler
 from pyftpdlib.servers import FTPServer
 
 class SyncTests(unittest.TestCase):
+    def test_publication_changes_and_empty_selection(self):
+        from publisher import publish
+        empty={'format':1,'server_id':'test','playlists':[],'tracks':{}}
+        changed=dict(empty,server_id='changed')
+        with tempfile.TemporaryDirectory() as directory:
+            cache=Path(directory);(cache/'head.json').write_bytes(b'previous publication')
+            with patch('publisher.snapshot',side_effect=[empty,changed]):
+                with self.assertRaises(ValueError):publish(None,Path('/source'),Path('/music'),cache)
+            self.assertEqual((cache/'head.json').read_bytes(),b'previous publication')
+            with patch('publisher.snapshot',return_value=empty):
+                head=publish(None,Path('/source'),Path('/music'),cache)
+            self.assertEqual(head['objects'],0)
+            self.assertEqual((cache/'catalogs'/head['catalog']).read_bytes(),b'{"format":1}\n')
+
+    def test_source_cache_invalidation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);source=root/'source';source.write_bytes(b'NAS source identity')
+            cache=root/'cache';cache.mkdir()
+            first=source_digest(source,cache)
+            with patch('media.digest',side_effect=AssertionError('unchanged source rehashed')):
+                self.assertEqual(source_digest(source,cache),first)
+            source.write_bytes(b'Changed source identity')
+            self.assertNotEqual(source_digest(source,cache),first)
+
+    def test_capacity(self):
+        required={'same.mp3':100,'new.mp3':1000,'partial.mp3':2000}
+        existing={'same.mp3':100,'partial.mp3':1}
+        needed=capacity(required,existing,8*1024*1024,120)
+        self.assertEqual(needed,3000+2*32768+120+4*1024*1024)
+        with self.assertRaises(OSError):capacity(required,existing,needed-1,120)
+        with self.assertRaises(ValueError):capacity(required,existing,True,120)
+
     def test_lyrics(self):
         ext,data=normalize_lyrics(b'[offset:-500]\n[00:02.00][00:04.000]hello\n','.lrc')
         self.assertEqual(ext,'.lrc');self.assertIn(b'[00:01.500]hello',data);self.assertIn(b'[00:03.500]hello',data)
@@ -21,6 +54,7 @@ class SyncTests(unittest.TestCase):
         self.assertIn(b'[00:01.100]Hello',data);self.assertIn(b'[00:02.200]\n',data)
         with self.assertRaises(ValueError):normalize_lyrics(b'x'*(256*1024+1),'.txt')
         with self.assertRaises(ValueError):normalize_lyrics(b'[00:99]bad','.lrc')
+        self.assertIn(b'Keep [these words] too',normalize_lyrics(b'[00:01.000]Keep [these words] too','.lrc')[1])
     def test_prepared_media(self):
         """Validate the actual NAS export; never synthesize music for this check."""
         import subprocess
@@ -53,7 +87,10 @@ class SyncTests(unittest.TestCase):
             try:
                 time.sleep(.2);deliver(cache,{'catalog':sha},ip,2121,30)
                 self.assertEqual((pod/'objects'/name).read_bytes(),data)
-                old=(pod/'objects'/name).stat().st_mtime_ns;deliver(cache,{'catalog':sha},ip,2121,30)
+                old=(pod/'objects'/name).stat().st_mtime_ns;deliver(cache,{'catalog':sha},ip,2121,30,free_bytes=8*1024*1024)
+                with self.assertRaises(OSError):deliver(cache,{'catalog':sha},ip,2121,30,free_bytes=0)
+                report_failure(ip,2121,'card_full')
+                self.assertEqual((pod/'error.txt').read_text(),'card_full\n')
                 self.assertEqual((pod/'objects'/name).stat().st_mtime_ns,old)
                 ftp=ftplib.FTP();ftp.connect(ip,2121,timeout=5);ftp.login()
                 with self.assertRaises(ftplib.error_perm):ftp.cwd('../../')
@@ -76,7 +113,7 @@ class SyncTests(unittest.TestCase):
                 try:
                     time.sleep(.1)
                     expected=subprocess.TimeoutExpired if mode=='interrupted' else subprocess.CalledProcessError
-                    with self.assertRaises(expected):deliver(cache,{'catalog':sha},ip,2121,.4 if mode=='interrupted' else 10)
+                    with self.assertRaises(expected):deliver(cache,{'catalog':sha},ip,2121,1.5 if mode=='interrupted' else 10)
                     self.assertFalse((pod/'ready').exists());self.assertEqual((pod/'existing-music').read_bytes(),b'Keep me')
                     partial=pod/'objects'/name;self.assertTrue(partial.is_file());self.assertLess(partial.stat().st_size,len(data))
                     if mode=='interrupted':
