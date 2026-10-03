@@ -93,7 +93,7 @@ static void preference_task(void *arg){
 }
 static void command_apply(command c){
     pearl_state s=pearl_audio_state();
-    if(detached&&c.kind!=ATTACH&&c.kind!=STOP)return;
+    if(detached&&c.kind!=ATTACH&&c.kind!=STOP&&c.kind!=VOLUME)return;
     if(c.kind==PLAY && c.value>=0 && (unsigned)c.value<library->track_count){active_collection=-1;s.track=c.value;playback_epoch++;s.seconds=0;s.paused=false;s.error[0]=0;}
     else if(c.kind==COLLECTION){unsigned index=c.value,position=c.position;if(index<library->collection_count&&position<library->collections[index].count){active_collection=index;collection_position=position;s.track=library->collections[index].tracks[position];playback_epoch++;s.seconds=0;s.paused=false;s.error[0]=0;}}
     else if(c.kind==DETACH){save();detached=true;detach_signaled=false;playback_epoch++;s.paused=true;}
@@ -192,7 +192,8 @@ static void task(void *arg){
 stopped:
     if(tx)i2s_channel_disable(tx);
     if(cs_addr>=0){cs_write(0x90003,0xef);vTaskDelay(pdMS_TO_TICKS(20));cs_write(0x20000,0xfe);gpio_set_level(41,0);}else if(CONFIG_PEARL_BUTTON_DOWN!=48)gpio_set_level(48,0);
-    save();pearl_state s=pearl_audio_state();s.ready=false;s.paused=true;publish(s);vTaskDelete(NULL);
+    if(!detached){save();}
+    pearl_state s=pearl_audio_state();s.ready=false;s.paused=true;publish(s);vTaskDelete(NULL);
 }
 void pearl_audio_start(pearl_library *l){library=l;state_lock=xSemaphoreCreateMutex();prefs_lock=xSemaphoreCreateMutex();reload_done=xSemaphoreCreateBinary();commands=xQueueCreate(16,sizeof(command));if(!state_lock||!prefs_lock||!reload_done||!commands){error("Not enough memory for playback");return;}xTaskCreatePinnedToCore(task,"audio",32768,NULL,5,NULL,1);}
 void pearl_audio_shutdown(void){send(STOP,0);for(int i=0;i<150&&pearl_audio_state().ready;i++)vTaskDelay(pdMS_TO_TICKS(10));}

@@ -15,6 +15,7 @@
 
 #include "lvgl.h"
 #include "player.h"
+#include "network.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/sdmmc_host.h"
@@ -636,6 +637,7 @@ static void library_task(void *arg)
     else if(pearl_library_scan(&music,"/sdcard/music"))err="Add a music folder to your card, then restart.";
     else {pearl_audio_start(&music);audio_started=true;}
     if(example_lvgl_lock(-1)){pearl_ui_ready(&music,err);example_lvgl_unlock();}
+    pearl_network_init();
     pearl_console_start(&music);
     ESP_LOGW("pearl","Library ready at %lld ms: %u albums, %u tracks; %s",esp_timer_get_time()/1000,music.album_count,music.track_count,err);
     vTaskDelete(NULL);
@@ -665,6 +667,7 @@ static void buttons_task(void *arg)
         if(d==BUTTON_SHORT){pearl_audio_volume(-2);ESP_LOGW("pearl","Volume down GPIO%d",down);}
         if(d==BUTTON_LONG){screen_locked=!screen_locked;esp_lcd_panel_disp_on_off(player_panel,!screen_locked);}
         if(u==BUTTON_LONG){
+            if(!pearl_network_shutdown()){ESP_LOGW("pearl","WiFi shutdown pending; hold again to sleep.");continue;}
             pearl_audio_shutdown();screen_locked=true;esp_lcd_panel_disp_on_off(player_panel,false);
             while(!gpio_get_level(up))vTaskDelay(pdMS_TO_TICKS(20));
             gpio_wakeup_enable(up,GPIO_INTR_LOW_LEVEL);esp_sleep_enable_gpio_wakeup();

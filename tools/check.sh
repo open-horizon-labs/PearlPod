@@ -15,3 +15,7 @@ cc -Wall -Wextra -Werror -fsanitize=address,undefined -Dmalloc=pearl_test_malloc
 
 cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_metadata.c main/metadata.c -o /tmp/pearl-metadata-tests
 /tmp/pearl-metadata-tests
+
+cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_wifi_policy.c -o /tmp/pearl-wifi-policy
+/tmp/pearl-wifi-policy
+node tests/test_portal.js

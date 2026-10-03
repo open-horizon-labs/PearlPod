@@ -85,7 +85,7 @@ LVGL's built-in Montserrat hierarchy uses heading at 28 px, current track at 24 
 
 ## Layout
 
-The fixed 460×460 screen uses 18 px horizontal insets and 424 px content width. Browse content begins at y=60 and is 304 px high. Album rows are 92 px high on a 100 px rhythm, with 64×64 thumbnails. Track rows are 72 px high on an 80 px rhythm beneath a 64 px Play album action. Album pages contain up to eight albums; track pages contain up to 32 tracks. Persistent header arrows handle page boundaries and disable unavailable directions. Footer routes are 204×64 with a 16 px gap.
+The fixed 460×460 screen uses 18 px horizontal insets and 424 px content width. Browse content begins at y=60 and is 304 px high. Album rows are 92 px high on a 100 px rhythm, with 64×64 thumbnails. Track rows are 72 px high on an 80 px rhythm beneath a 64 px Play all action. Album pages contain up to eight albums; track pages contain up to 32 tracks. Persistent header arrows handle page boundaries and disable unavailable directions. Footer routes are 204×64 with a 16 px gap.
 
 Now Playing centers 240×240 artwork above scrolling track and album labels. Transport at y=378 contains a central 168×76 play/pause target between 112×68 previous/next targets. Elapsed time sits beside the album label; volume sits in the header. Errors occupy a separate narrow band above transport. Back and page controls are 64×52. There are no responsive breakpoints.
 
@@ -101,11 +101,11 @@ Action buttons have softly curved 14 px corners; list rows use 12 px corners. Ar
 
 **Actions:** Yellow controls turn teal when pressed. Play/pause has the largest target, and its resting color becomes teal during active playback. The heading explicitly distinguishes Paused, Now playing, and Your music states. Rows use a brighter dark surface when pressed; the selected track has a distinct tonal surface and a text label.
 
-**Browsing:** Albums pair thumbnails with music names, counts, and a selected-album label when relevant. Tracks show sequence numbers and identify the selected track. Vertical dragging explores each page. Album browsing supports left/right swipes for pages; on a track page, left advances pages and right returns to albums. Explicit page arrows and Back remain available. Now Playing also supports a right swipe to albums. Gesture handling consumes the touch release to avoid selecting a track after a swipe. Album page scroll positions and each album's track position are saved during navigation.
+**Browsing:** Albums pair thumbnails with music names, counts. Tracks show sequence numbers and identify the selected track. Vertical dragging explores each page. Album browsing supports left/right swipes for pages; on a track page, left advances pages and right returns to albums. Explicit page arrows and Back remain available. Now Playing also supports a right swipe to albums. Gesture handling consumes the touch release to avoid selecting a track after a swipe. Album page scroll positions and each album's track position are saved during navigation.
 
 **Artwork:** Only visible album rows request thumbnails. Decoding runs asynchronously; generation tokens discard stale results after navigation. Personal anime artwork remains visible when covers are absent or fail to decode. Now Playing requests the album cover or embedded artwork from the selected track. The same illustration greets Listener during the quick startup scan.
 
-**Navigation and feedback:** Browse footers offer Albums and Playing, with Albums selected in teal on the collection view. Now Playing replaces those routes with larger transport and a header Back button. Short browse hints invite exploration or explain the return gesture; errors replace hints. Empty-state copy explains how to add albums. No seek bar, decorative animation, custom focus treatment, or in-device settings surface is implemented.
+**Navigation and feedback:** Browse footers offer Browse and Playing, with Browse selected in teal on the collection view. The header library control opens Albums, Artists, Folders, Playlists and Rescan card. Now Playing replaces those routes with larger transport and a header Back button. Short browse hints invite exploration or explain the return gesture; errors replace hints. Empty-state copy explains how to add albums. No seek bar, decorative animation, custom focus treatment, or in-device settings surface is implemented.
 
 ## Do's and Don'ts
 
@@ -115,3 +115,5 @@ Action buttons have softly curved 14 px corners; list rows use 12 px corners. Ar
 - **Don't** introduce a timed decorative startup gate or Wi-Fi requirement for listening.
 - **Don't** claim physical swipe accuracy from source inspection or host renders.
 - **Don't** add decorative motion that competes with music names or controls.
+
+Collection browsing uses the same thumbnail rows and gesture model for Albums, Artists, Folders and Playlists. Music names scroll on browse rows as well as Now Playing. The scanner has dynamically sized memory rather than arbitrary group/track/depth limits; 32-track pages keep LVGL coordinates bounded. Rescan has a visible waiting state, pauses playback and restores a fresh snapshot or reports that the previous one was retained.
