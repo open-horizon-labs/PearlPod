@@ -103,6 +103,10 @@ The first transport is scoped to the home LAN and a per-device delivery credenti
 
 HTTP conditional requests and resumable ranges use standard semantics, not a custom delta algorithm. [RFC 9110: conditional requests and Range](https://www.rfc-editor.org/rfc/rfc9110.html).
 
+## Metadata, artwork and lyrics contract
+
+The exporter must satisfy [EXPORT-MEDIA-CONTRACT.md](EXPORT-MEDIA-CONTRACT.md), including filesystem compatibility, genre preservation, explicit artwork/lyric associations and parser round-trip checks. Transport success alone is insufficient. Genre and lyric display require firmware changes; the current scanner does not implement them.
+
 ## Device algorithm and card layout
 
 The existing firmware scans `/sdcard/music` recursively. A managed subtree must be excluded from that ordinary scan, then loaded from **only the active generation**. Otherwise staged files, previous playlists and orphaned tracks appear as current music. This is a required firmware change, not an existing feature.
