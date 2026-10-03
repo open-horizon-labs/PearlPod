@@ -1,5 +1,7 @@
 # Solution Space
 
+The concrete source adapters, wire requests, card layout, resume/activation algorithm and revised dissent are in [PLAYLIST-EXPORT-SYNC-DESIGN.md](PLAYLIST-EXPORT-SYNC-DESIGN.md). That expansion makes Roon export freshness, manifest-aware scanning and FAT32 fault testing explicit.
+
 ## Solution Space Analysis
 
 **Problem:** Listener should independently curate music from the NAS and find those same playlists, in the same order, ready for offline playback on PearlPod.
@@ -74,7 +76,7 @@ No WebDAV requirement returns here: a small authenticated HTTP delivery service 
 
 ## S&T Selection
 
-No existing Problem Weave or S&T lineage was found for this scope. No step IDs are invented. The sufficient prototype is one real child-profile playlist through the NAS exporter to the existing Pod M3U8 reader. Scheduling and graphical playlist covers follow only after that round trip and interrupted-transfer checks pass. Firmware/server implementation is not authorized merely by this exploration; this document records the recommendation and handoff.
+No existing Problem Weave or S&T lineage was found for this scope. No step IDs are invented. The sufficient prototype is one real child-profile playlist through the NAS exporter to the existing Pod M3U8 reader. Scheduling and graphical playlist covers follow only after that round trip and interrupted-transfer checks pass. This exploration records the recommendation and execution handoff; it does not deploy firmware or a server.
 
 ## Execution Handoff
 
