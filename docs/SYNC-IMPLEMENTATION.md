@@ -1,6 +1,6 @@
 # Sync implementation and acceptance evidence
 
-The local candidate uses existing NAS music, ffmpeg preparation and lftp delivery. It does not generate replacement music or modify source files. No firmware containing these changes has yet been flashed; USB enumeration was absent during the final verification. A host socket harness is useful evidence for the shared FTP code, not a substitute for the device.
+The local candidate uses existing NAS music, ffmpeg preparation and lftp delivery. It does not generate replacement music or modify source files. The local sync candidate was flashed app-only to the verified PearlPod USB identity, with esptool hash verification. The player boots, preserves all 54 manually copied tracks and preferences, decodes existing FLAC without error and handles pause. The physical sync acceptance is currently blocked by absent saved WiFi credentials, rather than USB availability. A host socket harness is useful evidence for the shared FTP code, not a substitute for the device.
 
 ## Executed flow
 
@@ -17,7 +17,7 @@ Paused playback → Your library → Sync now connects saved WiFi, discovers `_p
 - Actual firmware metadata and artwork C code parses the real prepared MP3s under AddressSanitizer/UBSan. The test no longer generates an audio tone.
 - Shared native FTP code: unchanged-object upload skipped; truncated/interrupted file retried; simulated write-capacity failure published no ready marker; pre-existing files retained; path traversal rejected. These are host fault injections rather than real FAT/card failures.
 - Actual managed loader/library C code: real prepared catalog yields two tracks, one album, one ordered two-entry playlist and two lyric associations. NVS commit failure leaves old activation intact; malformed/deep catalog rejects; successful subsequent activation retains the previous hash. Cleanup preserves active/previous references and manual files, removes retired objects only after they leave both selections, and fails closed on damaged retained catalogs. A valid empty selection activates without deleting manual files.
-- Existing library, metadata, WiFi, power and recovery host checks pass. LVGL render/interaction checks pass including entering the lyric surface. ESP-IDF v5.5.5 local build passes.
+- Host mDNS advertisement is discoverable with port 8787 and FTP transport; discovery on the ESP32 remains a device check. Existing library, metadata, WiFi, power and recovery host checks pass. LVGL render/interaction checks pass including entering the lyric surface. ESP-IDF v5.5.5 local build passes.
 - An earlier local Linux image built and passed Python import/lftp smoke checks. The final container rebuild stalled in the local Docker daemon and remains unverified. No NAS container or nightly automation has been deployed.
 
 ## Reproduce
@@ -35,7 +35,7 @@ This check currently expects the verified two-track local playlist. It copies li
 
 ## Device acceptance still required
 
-Reconnect USB, flash the application preserving preferences, then verify boot time, physical volume controls, existing playback, mDNS discovery, an actual Sync now, playlist order, artwork, lyrics and WiFi shutdown. Measure peak internal RAM and task stack during repeated sync and decoder/lyric timing against audible output. Test cancellation, an unavailable host, bad uploads, real card-full behavior and controlled power cuts before enabling unattended operation.
+Configure a saved 2.4 GHz network, then verify an actual Sync now, playlist order, artwork, lyrics and WiFi shutdown. The app-only flash and existing FLAC decoder/pause checks pass. Boot time, physical controls and audible lyric alignment still require observation on this build. Measure peak internal RAM and task stack during repeated sync and decoder/lyric timing against audible output. Test cancellation, an unavailable host, bad uploads, real card-full behavior and controlled power cuts before enabling unattended operation.
 
 The current implementation retransfers interrupted whole files; it has no upload resume or block delta. Capacity preflight and conservative active/previous-reference cleanup are implemented and host-tested. The capacity reserve is conservative rather than a guarantee against concurrent card writes; real FAT cluster/capacity failure remains a device test. Small historical catalogs remain retained. Embedding means a tag/cover edit changes MP3 bytes and requires replacement upload; playlist/lyric-only edits preserve audio objects. Language variants are carried, but the UI selects the first variant. Japanese font coverage is incomplete. Timed lyrics follow the decoder clock, with physical DMA/MP3 alignment unmeasured; no word timing is claimed. Charging-only nightly wake remains gated on a truthful charging signal.
 
@@ -51,8 +51,8 @@ The selected mechanism remains HTTP-triggered lftp into a temporary receiver. Sc
 | Card capacity and terminal failure | Missing-file budget test, actual inventory, zero-space service rejection and error marker | Delete active songs to make space or wait silently for 14 minutes |
 | Retained/manual file protection | Actual C cleanup test covers previous-only references, retired object, non-managed files and damaged catalogs | Delete every file absent from the newest list |
 | Empty selection | Host format-header publication and C empty-library activation pass | Treat any source error as an empty success |
-| Lyric parsing and memory | Bounds/repeated stamps/bracket text tests; explicit PSRAM allocation and UI interaction pass | Whole text/cue buffers in internal RAM or discard bracketed lyric words |
-| Boot, RAM, mDNS, audio and FAT cuts on actual Pod | Accepted pending device availability: USB is absent; socket shims cannot measure these hardware properties | Claim hardware success from host tests |
+| Lyric parsing and memory | Bounds/repeated stamps/bracket text/footer offsets/overflow tests; explicit PSRAM allocation and UI interaction pass | Whole text/cue buffers in internal RAM or discard bracketed lyric words |
+| Boot, RAM, mDNS, audio and FAT cuts on actual Pod | Partially verified: real app flash, offline library and FLAC/pause checks pass; no saved WiFi blocks sync. Socket shims cannot retire network peak memory, audible alignment or FAT cuts | Claim hardware success from host tests |
 | Container execution | Earlier image smoke checks passed; latest Docker API times out despite OrbStack reporting Running. No other workloads were restarted | Claim a successful final container rebuild |
 | Nightly charging / Roon / word timing | Outside current manual Plex scope; truthful charging signal and exact Roon intake are not established | Add timer wake based on USB host presence or fuzzy Roon matching |
 

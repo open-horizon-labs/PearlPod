@@ -28,6 +28,13 @@ int main(void) {
   assert(pearl_lyrics_load(path, &l));
   assert(!strcmp(l.cues[0].text, "Keep [these words] too"));
   pearl_lyrics_free(&l);
+  f = fopen(path, "w");
+  fputs("[00:01.000]Footer offset\n[offset:-500]\n", f);
+  fclose(f);
+  assert(pearl_lyrics_load(path, &l));
+  assert(l.cues[0].milliseconds == 500);pearl_lyrics_free(&l);
+  f = fopen(path, "w");fputs("[999999999999999999999:00]Bad\n", f);fclose(f);
+  assert(!pearl_lyrics_load(path, &l));
   unlink(path);
   puts("Lyrics timing, repeated stamps, sorting, invalid input and cleanup "
        "pass");

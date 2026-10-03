@@ -1,5 +1,7 @@
 #include "lyrics.h"
 #include <stdio.h>
+#include <errno.h>
+#include <limits.h>
 #ifdef ESP_PLATFORM
 #include "esp_heap_caps.h"
 #define lyric_malloc(n) heap_caps_malloc((n), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
@@ -50,8 +52,20 @@ bool pearl_lyrics_load(const char *path, pearl_lyrics *l) {
     pearl_lyrics_free(l);
     return false;
   }
-  char *save = NULL, *line = strtok_r(l->text, "\n", &save);
+  char *save = NULL, *line;
   int offset = 0;
+  /* Offsets apply to the entire file, including a footer tag. */
+  for (char *tag = strstr(l->text, "[offset:"); tag; tag = strstr(tag + 1, "[offset:")) {
+    if (tag != l->text && tag[-1] != '\n') continue;
+    char *end;
+    errno = 0;
+    long value = strtol(tag + 8, &end, 10);
+    if (errno || end == tag + 8 || *end != ']' || value < INT_MIN || value > INT_MAX) {
+      pearl_lyrics_free(l); return false;
+    }
+    offset = (int)value;
+  }
+  line = strtok_r(l->text, "\n", &save);
   while (line) {
     size_t n = strlen(line);
     if (n && line[n - 1] == '\r')
@@ -60,17 +74,20 @@ bool pearl_lyrics_load(const char *path, pearl_lyrics *l) {
       pearl_lyrics_free(l);
       return false;
     }
-    if (!strncmp(line, "[offset:", 8))
-      offset = atoi(line + 8);
     char *p = line;
     unsigned added = l->count;
     while (*p == '[') {
-      unsigned minute, second;
-      int consumed = 0;
-      if (sscanf(p, "[%u:%u%n", &minute, &second, &consumed) != 2 ||
-          consumed <= 0 || minute > 71582 || second >= 60)
-        break;
-      p += consumed;
+      if (p[1] < '0' || p[1] > '9') break;
+      char *end;
+      errno = 0;
+      unsigned long minute = strtoul(p + 1, &end, 10);
+      if (errno || minute > 71582 || *end != ':' || end[1] < '0' || end[1] > '9') {
+        pearl_lyrics_free(l); return false;
+      }
+      p = end + 1;
+      unsigned long second = strtoul(p, &end, 10);
+      if (errno || second >= 60) { pearl_lyrics_free(l); return false; }
+      p = end;
       unsigned fraction = 0, digits = 0;
       if (*p == '.' || *p == ':') {
         p++;
@@ -87,6 +104,7 @@ bool pearl_lyrics_load(const char *path, pearl_lyrics *l) {
       }
       p++;
       int64_t ms = (int64_t)minute * 60000 + second * 1000 + fraction + offset;
+      if (ms > UINT32_MAX) { pearl_lyrics_free(l); return false; }
       l->cues[l->count++] =
           (pearl_cue){.milliseconds = ms < 0 ? 0 : (uint32_t)ms, .text = NULL};
     }
