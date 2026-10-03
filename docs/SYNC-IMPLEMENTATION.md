@@ -1,6 +1,6 @@
 # Sync implementation and acceptance evidence
 
-The local candidate uses existing NAS music, ffmpeg preparation and lftp delivery. It does not generate replacement music or modify source files. The local sync candidate was flashed app-only to the verified PearlPod USB identity, with esptool hash verification. The player boots, preserves all 54 manually copied tracks and preferences, decodes existing FLAC without error and handles pause. The physical sync acceptance is currently blocked by absent saved WiFi credentials, rather than USB availability. A host socket harness is useful evidence for the shared FTP code, not a substitute for the device.
+The local candidate uses existing NAS music, ffmpeg preparation and lftp delivery. It does not generate replacement music or modify source files. The local sync candidate was flashed app-only to the verified PearlPod USB identity, with esptool hash verification. The player boots, preserves all 54 manually copied tracks and preferences, decodes existing FLAC without error and handles pause. The physical sync acceptance is currently blocked by absent saved WiFi credentials, rather than USB availability. The actual setup AP starts and scans eight visible networks without a reset. During AP setup the USB memory check reports 26,523 free internal bytes, 25,836 minimum internal bytes and an 18,432-byte largest internal block; these are AP measurements, not a full-sync memory budget. A host socket harness is useful evidence for the shared FTP code, not a substitute for the device.
 
 ## Executed flow
 
