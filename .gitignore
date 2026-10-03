@@ -19,3 +19,7 @@ recovery/
 
 # Local UI verification captures
 docs/ui/current/
+
+# Local sync runtime and credentials
+.sync-venv/
+.sync-state/
