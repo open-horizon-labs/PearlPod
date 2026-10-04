@@ -1,10 +1,37 @@
 # PearlPod
 
-PearlPod turns the **CS43131 FakePod Nano** into an offline music player: albums, artwork, playlists and lyrics on microSD, with touchscreen playback and two volume buttons. It is part of [HiPhi.audio](https://hiphi.audio/pearlpod.html).
+**PearlPod is a customizable pocket music player.** Install it on a CS43131 FakePod Nano, put your music on microSD, and listen through the 3.5 mm headphone jack. Browse albums and playlists on the touchscreen, read along in lyric mode, and give the player your name, colors, pictures and greetings.
 
-**Alpha firmware, tested on one physical CS43131 unit.** The PCM5102 variant is unverified. Confirm the DAC variant with the seller before buying.
+It is part of [HiPhi.audio](https://hiphi.audio/pearlpod.html). Music plays directly from the card; WiFi is optional for copying Plex playlists from your home library.
 
-[Flash in your browser](https://hiphi.audio/flash/pearlpod/) · [Downloads and release notes](https://github.com/open-horizon-labs/pearlpod-releases/releases) · [Order hardware](https://www.tindie.com/products/johnson/fakepod-nano-cnc-aluminum-amoled-audio-player/)
+[See the player and its features](https://hiphi.audio/pearlpod.html) · [Install over USB](https://hiphi.audio/flash/pearlpod/) · [Download firmware](https://github.com/open-horizon-labs/pearlpod-releases/releases) · [Buy the hardware](https://www.tindie.com/products/johnson/fakepod-nano-cnc-aluminum-amoled-audio-player/)
+
+**Alpha, tested on one physical CS43131 unit.** The PCM5102 variant is unverified. Confirm the DAC with the seller before ordering. Firmware is free for noncommercial use.
+
+## See what it does
+
+These are production firmware UI renders using Pearl’s personal anime-inspired packs. The library, lyrics, sync counts and ETA are illustrative; these are screens, not device photographs. Album covers take priority when present; the pictured playback screen uses the theme’s illustration because the sample song has no cover.
+
+| Personal welcome | Now Playing | Lyric mode |
+| --- | --- | --- |
+| <img src="docs/ui/personal-example/personal-welcome.png" width="230" alt="Hey, Pearl! welcome with Hero Academy artwork"> | <img src="docs/ui/personal-example/personal-playing.png" width="230" alt="Themed music playback with Lyrics button"> | <img src="docs/ui/personal-example/personal-lyrics.png" width="230" alt="Lyrics with the current line highlighted and Follow control"> |
+
+| Album browser | Playlist sync | Personal farewell |
+| --- | --- | --- |
+| <img src="docs/ui/personal-example/personal-browse.png" width="230" alt="Albums with Pearl’s theme colors"> | <img src="docs/ui/personal-example/personal-sync.png" width="230" alt="Current playlist and song, progress and sync ETA"> | <img src="docs/ui/personal-example/personal-farewell.png" width="230" alt="Rest well, Pearl! Music Classroom farewell"> |
+
+## Player features
+
+- **Music on microSD:** MP3, FLAC and WAV in ordinary folders. Browse by album, artist, folder or playlist; album and artist tags organize the library, and disc/track tags set album order.
+- **Album artwork:** embedded MP3/FLAC covers or neighboring cover files appear in Browse and Now Playing. A theme illustration fills in during playback when art is missing.
+- **Touch and buttons:** swipe to browse, tap to play, use large playback controls, and adjust volume with the two physical buttons. Volume and the selected track survive restart.
+- **Playlists:** M3U, M3U8 and XSPF with local paths, preserving the chosen order and repeated songs.
+- **Lyrics:** timed LRC highlights and follows the current line; scroll ahead and tap Follow to return. Untimed lyrics can be read manually. Timed appearance still needs a physical-device visual check.
+- **Personal theme packs:** your name, colors, welcome/farewell pictures and greetings live on the card. Rotate favorite packs and scene variants between starts without changing playback controls or reflashing.
+- **Optional Plex sync:** export `PP:` playlists from a selected Plex profile through a home runner. Convert existing music with FFmpeg, embed covers, carry over lyrics, reuse shared songs and unchanged files, and resume after an interruption. The player shows the current playlist/song, progress and ETA.
+- **Fast ordinary starts:** load the saved library index instead of rescanning. Rescan only after manual changes or a changed sync.
+- **Power controls:** darken the screen while listening, sleep and wake with a hold, and turn WiFi off when its session ends. Active USB serial sessions block automatic screen sleep and deep sleep.
+- **Home WiFi and diagnostics:** captive setup portal, optional microSD credential import, up to four saved networks, and a read-only status endpoint while connected for diagnostics.
 
 ## Start listening
 
@@ -29,9 +56,9 @@ The screen sleeps after 45 seconds without interaction; tap to wake without sele
 
 ## Artwork, playlists and lyrics
 
-Use embedded MP3/FLAC artwork or a neighboring `cover.jpg`, `cover.png`, `folder.jpg` or `folder.png`. Supported images are at most 400 KiB and 1,024 pixels per dimension. Missing artwork uses the neutral fallback.
+Use embedded MP3/FLAC artwork or a neighboring `cover.jpg`, `cover.png`, `folder.jpg` or `folder.png`. Supported images are at most 400 KiB and 1,024 pixels per dimension. When artwork is missing, the selected theme’s illustration is used when available; otherwise the player uses the neutral fallback.
 
-Put M3U, M3U8 or XSPF playlists inside `music/`. Relative paths resolve beside the playlist; order and intentional duplicates are preserved. Network URLs and paths outside the music root are skipped. For lyrics, put an LRC file beside its song with the same filename stem. Open **Lyrics** from Now Playing when lyrics are present. Timed lyric appearance still needs a physical visual check.
+Put M3U, M3U8 or XSPF playlists inside `music/`. Relative paths resolve beside the playlist; order and intentional duplicates are preserved. Network URLs and paths outside the music root are skipped. For lyrics, put a timed `.lrc` or untimed `.txt` file beside its song with the same filename stem. Open **Lyrics** from Now Playing when lyrics are present. Timed lyric appearance still needs a physical visual check.
 
 Album and artist tags organize the library; disc and track tags set album order, followed by natural filename sorting. UTF-8 paths are supported up to 511 bytes, but the UI font does not cover every CJK character. Library capacity depends on available memory. A failed rescan retains the previous index and reports skipped entries.
 
@@ -47,9 +74,21 @@ You can also import credentials from a root-level `wifi.toml` using [the example
 
 Setup, diagnostics and sync have no PearlPod login. Use them on your trusted home network. **Connect for diagnostics** exposes a read-only `/status` endpoint at the player’s LAN address. Setup expires after five inactive minutes and diagnostics after fifteen minutes; the radio turns off when the session ends. See [WiFi verification](docs/WIFI-EXECUTION.md) and [sync evidence](docs/SYNC-IMPLEMENTATION.md).
 
-## Personalize the player
+## Make it yours
 
-Choose [Midnight, Sakura or Sunburst](https://github.com/open-horizon-labs/pearlpod-releases/tree/main/theme-packs). These packs change colors and greetings. Edit the name in `Person.toml` and restart. Custom packs can also supply welcome and farewell pictures and phrases; see [installation and format](docs/THEME-PACKS.md). This repository’s `theme-packs/Default` contains synthetic artwork for tests.
+Pearl’s personal packs use My Hero Academia and Assassination Classroom inspired illustrations, with several welcome and farewell scenes. Her name is inserted into the greeting separately from the artwork. The screenshots above show that example; the firmware can load different names and packs from any music card.
+
+Start with [Midnight, Sakura or Sunburst](https://github.com/open-horizon-labs/pearlpod-releases/tree/main/theme-packs) for colors and greetings, or create a pack with your own pictures and phrases. Copy the pack’s `Themes/` directory and `Person.toml` into `music/`. For example:
+
+```toml
+name = "Your name"
+themes = ["midnight", "sakura"]
+rotate = true
+```
+
+Restart to apply changes. With rotation enabled, each boot chooses the next favorite pack; welcome and farewell scene variants advance when that pack returns. The palette stays fixed during the session. A picture and its phrase are selected together, and album artwork takes priority during playback.
+
+See [theme-pack installation and format](docs/THEME-PACKS.md) to supply colors, 240×240 pictures and personalized phrases. This repository’s `theme-packs/Default` is a synthetic test fixture. The public starter packs contain palettes and greetings with neutral fallback art; Pearl’s personal pack is separate from those downloads.
 
 ## Update and recover
 
@@ -78,7 +117,7 @@ tools/flash.sh /dev/cu.usbmodemDEVICE
 
 Binaries belong in [GitHub releases](https://github.com/open-horizon-labs/pearlpod-releases/releases). `tools/fetch-firmware.sh` downloads them with GitHub CLI. The merged image flashes at offset zero; packaged checksums identify each artifact. Button GPIOs and the volume cap are configurable through menuconfig.
 
-See [hardware evidence](docs/HARDWARE.md), [verification](docs/VERIFICATION.md) and [design](DESIGN.md). `tools/render_ui.sh /tmp/pearl-ui-check` renders the production LVGL interface with fixture music after IDF has fetched managed components.
+See [hardware evidence](docs/HARDWARE.md), [verification](docs/VERIFICATION.md) and [design](DESIGN.md). `tools/render_ui.sh /tmp/pearl-ui-check` renders the production LVGL interface with fixture music after IDF has fetched managed components. To capture your own card pack, set `PEARL_PREVIEW_PACK=/path/to/pack` and `PEARL_PUBLIC_FIXTURES=1` when running it; the pack directory must contain `Person.toml` and `Themes/`. The optional captures include welcome, farewell, browsing, playback, lyrics and sync for four scene selections.
 
 ## License
 

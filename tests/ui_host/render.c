@@ -65,5 +65,27 @@ int main(int argc,char **argv){assert(argc==2);lv_init();static lv_color_t draw[
    lifecycle_screen(true);assert(theme_image(true)==&pearl_fallback);
    pearl_theme_publish_farewell(pearl_theme_read_farewell());assert(lv_img_get_src(lv_obj_get_child(body,0))==&pearl_fallback);lifecycle_screen(true);assert(theme_image(true)!=&pearl_fallback);snprintf(path,sizeof(path),"%s/theme-%u-farewell.ppm",argv[1],seq);capture(path);
  }
+ // Optional presentation captures use a caller-supplied card pack, never bundled personal assets.
+ const char *preview_pack=getenv("PEARL_PREVIEW_PACK");
+ if(preview_pack){
+   for(unsigned seq=0;seq<4;seq++){
+     reset_body();pearl_theme_load(preview_pack,seq);pearl_ui_theme_ready();
+     shutting_down=true;lifecycle_screen(false);
+     snprintf(path,sizeof(path),"%s/custom-%u-welcome.ppm",argv[1],seq);capture(path);
+     pearl_theme_publish_farewell(pearl_theme_read_farewell());lifecycle_screen(true);
+     snprintf(path,sizeof(path),"%s/custom-%u-farewell.ppm",argv[1],seq);capture(path);
+     shutting_down=false;pearl_ui_ready(&library,"");view=PEARL_ALBUMS;rebuild_browse();page=-1;render();
+     snprintf(path,sizeof(path),"%s/custom-%u-browse.ppm",argv[1],seq);capture(path);
+     state.track=0;state.paused=false;state.seconds=83;page=-3;render();
+     snprintf(path,sizeof(path),"%s/custom-%u-playing.ppm",argv[1],seq);capture(path);
+     FILE *preview_lyrics=fopen("/tmp/pearl-ui-preview.lrc","wb");assert(preview_lyrics);
+     fputs("[00:01.000]A little music for the road\n[00:02.000]Your next adventure starts here\n[00:03.000]Keep your favorite songs close\n",preview_lyrics);fclose(preview_lyrics);
+     tracks[0].lyrics=strdup("/tmp/pearl-ui-preview.lrc");state.milliseconds=2200;page=-6;render();
+     snprintf(path,sizeof(path),"%s/custom-%u-lyrics.ppm",argv[1],seq);capture(path);
+     host_sync_view=(pearl_sync_view){.title="After-school adventures",.detail="First light",.context="Sample Artist / Songs for the journey",.count="Overall: 12 of 48 songs",.timing="Whole sync: about 3 min left",.percent=36,.determinate=true,.busy=true,.playlists_ready=1};
+     page=-7;render();snprintf(path,sizeof(path),"%s/custom-%u-sync.ppm",argv[1],seq);capture(path);
+     remove("/tmp/pearl-ui-preview.lrc");
+   }
+ }
  reset_body();pearl_theme_clear();
  printf("LVGL navigation, lyrics, sync states, sleep/wake, immediate boot handoff, shutdown input isolation, stale-art cleanup, rescan race and failed-shutdown recovery pass.\n");return 0;}
