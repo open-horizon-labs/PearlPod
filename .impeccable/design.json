@@ -54,11 +54,11 @@
     }
   ],
   "narrative": {
-    "overview": "The embedded Operate surface is a personal anime music companion for Listener. Sample soundtrack and Sample collection are the user's confirmed imagery references. The current interface places expressive personal artwork within a quiet, readable listening surface.",
+    "overview": "The embedded Operate surface is a custom theme music companion for Listener. Optional card-based themes provide personalization. The current interface places expressive personal artwork within a quiet, readable listening surface.",
     "keyCharacteristics": [
       "Recognizable album thumbnails lead browsing; large cover art leads listening.",
       "Generous touch controls prioritize play/pause and keep navigation predictable.",
-      "Personal anime imagery provides fallback art while real covers load asynchronously."
+      "Custom theme imagery provides fallback art while real covers load asynchronously."
     ],
     "rules": [],
     "dos": [

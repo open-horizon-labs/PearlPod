@@ -17,7 +17,7 @@ services:
       - --plex-token
       - /run/secrets/plex_token
       - --plex-url
-      - ${PEARLPOD_PLEX_URL:-http://192.0.2.2:32400}
+      - ${PEARLPOD_PLEX_URL:-http://127.0.0.1:32400}
       - --source-root
       - ${PEARLPOD_SOURCE_ROOT:-/share/Media/Music}
       - --music

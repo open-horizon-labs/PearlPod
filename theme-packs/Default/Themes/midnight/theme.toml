@@ -1,0 +1,25 @@
+version = 1
+title = "Midnight"
+[palette]
+background = "#071A2E"
+surface = "#0D2943"
+text = "#F8FAFB"
+accent = "#00C8F0"
+secondary = "#B9C9D4"
+[[welcome]]
+image = "welcome-01.rgb565"
+heading = "Welcome, {name}!"
+phrase = "Your next favorite is waiting."
+[[farewell]]
+image = "farewell-01.rgb565"
+heading = "See you soon, {name}!"
+phrase = "Keep a little music for tomorrow."
+
+[[welcome]]
+image = "welcome-02.rgb565"
+heading = "Ready, {name}?"
+phrase = "Your music is here."
+[[farewell]]
+image = "farewell-02.rgb565"
+heading = "Goodnight, {name}!"
+phrase = "More music tomorrow."

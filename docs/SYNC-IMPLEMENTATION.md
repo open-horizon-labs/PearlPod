@@ -4,7 +4,7 @@ The local candidate uses existing NAS music, ffmpeg preparation and lftp deliver
 
 ## Executed flow
 
-The host authenticates to Plex as `selected-profile`, selects audio playlists with the `PP:` prefix and strips that prefix on the player. Exact media-part paths map from `/share/Media/Music` to the read-only `/Volumes/MUSIC` mount. The selected real playlist is `PP: PearlPod Sync Test` (12345), with Beautiful Trauma and What About Us by P!nk. The Plex creation API removed an attempted duplicate; the exporter preserves whatever ordered entries Plex actually returns.
+The host authenticates to Plex as `selected-profile`, selects audio playlists with the `PP:` prefix and strips that prefix on the player. Exact media-part paths map from `/share/Media/Music` to the read-only `/Volumes/MUSIC` mount. The selected real playlist is `PP: PearlPod Sync Test` (12345), with Sample Track A and Sample Track B by Sample Artist. The Plex creation API removed an attempted duplicate; the exporter preserves whatever ordered entries Plex actually returns.
 
 A background publisher checks Plex every minute, prepares distinct selected tracks and publishes a completed catalog atomically on the host. Lossless sources become 256 kbps, 48 kHz stereo MP3 through ffmpeg; MP3 sources use stream copy. ID3v2.3 identity, genre and available year are retained. Album covers are resized and embedded, with separate cover objects as well. Source sidecars and embedded lyrics are carried when available, with supported timed sources normalized to LRC. No lyrics are invented or downloaded from external lyric services.
 

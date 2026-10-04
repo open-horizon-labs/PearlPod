@@ -13,7 +13,7 @@ __pycache__/
 wifi.toml
 custom.toml
 
-# Firmware is distributed through private GitHub releases.
+# Firmware is distributed through GitHub releases.
 dist/
 recovery/
 
@@ -23,3 +23,6 @@ docs/ui/current/
 # Local sync runtime and credentials
 .sync-venv/
 .sync-state/
+
+# Personal theme packs remain local.
+theme-packs/personal/

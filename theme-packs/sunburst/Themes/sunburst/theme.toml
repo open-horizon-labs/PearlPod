@@ -1,0 +1,14 @@
+version = 1
+title = "Sunburst"
+[palette]
+background = "#242015"
+surface = "#3E3521"
+text = "#FFF7E2"
+accent = "#FFD166"
+secondary = "#DCCCAA"
+[[welcome]]
+heading = "Welcome, {name}!"
+phrase = "Press play. Bring the sunshine."
+[[farewell]]
+heading = "See you soon, {name}!"
+phrase = "Good songs will be here tomorrow."

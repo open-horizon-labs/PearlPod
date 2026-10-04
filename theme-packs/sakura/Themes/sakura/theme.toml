@@ -1,0 +1,14 @@
+version = 1
+title = "Sakura"
+[palette]
+background = "#291E2C"
+surface = "#433044"
+text = "#FFF4F8"
+accent = "#FFB7CF"
+secondary = "#DAC1D6"
+[[welcome]]
+heading = "Welcome, {name}!"
+phrase = "A small moment, just for music."
+[[farewell]]
+heading = "See you soon, {name}!"
+phrase = "See you when the music calls."

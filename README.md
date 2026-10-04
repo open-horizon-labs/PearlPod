@@ -1,6 +1,6 @@
 # PearlPod
 
-Offline anime-themed music firmware for Listener’s CS43131 FakePod Nano. The installed player supports MP3, FLAC and WAV, nested microSD albums, touchscreen playback, artwork and physical volume controls. Music playback stays offline; WiFi setup is an explicit action. Plex playlist sync is device-tested, including interrupted transfers and incremental playlist updates. Lyrics are available when supplied; timed lyric appearance still needs a physical visual check.
+Offline music firmware for the CS43131 FakePod Nano, part of the HiPhi.audio family. The installed player supports MP3, FLAC and WAV, nested microSD albums, touchscreen playback, artwork and physical volume controls. Music playback stays offline; WiFi setup is an explicit action. Plex playlist sync is device-tested, including interrupted transfers and incremental playlist updates. Lyrics are available when supplied; timed lyric appearance still needs a physical visual check.
 
 ## Everyday controls
 
@@ -30,7 +30,7 @@ The audio pipeline decodes to 16-bit stereo and resamples to 48 kHz, including F
 
 ## Update over USB
 
-Clone this private repository and run `tools/update.sh /dev/cu.usbmodemDEVICE`. It fetches the private GitHub release if local firmware is absent, verifies checksums, installs a pinned esptool in a local virtual environment if necessary, and flashes separate regions to preserve preferences. No ESP-IDF, Chinese phone number or OSHWhub download is needed. `tools/update.sh --check` verifies files without touching the device. Bluetooth/WiFi firmware OTA is not implemented.
+Clone this repository and run `tools/update.sh /dev/cu.usbmodemDEVICE`. It fetches the public GitHub release if local firmware is absent, verifies checksums, installs a pinned esptool in a local virtual environment if necessary, and flashes separate regions to preserve preferences. No ESP-IDF, Chinese phone number or OSHWhub download is needed. `tools/update.sh --check` verifies files without touching the device. Bluetooth/WiFi firmware OTA is not implemented.
 
 ## Build and flash
 
@@ -43,12 +43,12 @@ tools/build.sh
 tools/flash.sh /dev/cu.usbmodemDEVICE
 ```
 
-Firmware binaries are [private release assets](https://github.com/open-horizon-labs/PearlPod/releases/tag/v0.3.0), excluded from Git history. Run `tools/fetch-firmware.sh` (requires GitHub CLI signed in with repository access) to download and verify them. `dist/pearl-player-merged.bin` is the complete image for flash offset zero. `dist/SHA256SUMS` identifies the packaged artifacts. Button GPIOs and the volume cap are configurable through menuconfig. This build has been tested on the CS43131 unit; the PCM5102 variant is not verified.
+Firmware binaries are [public release assets](https://github.com/open-horizon-labs/pearlpod-releases/releases), excluded from Git history. Run `tools/fetch-firmware.sh` (requires GitHub CLI) to download and verify them. `dist/pearl-player-merged.bin` is the complete image for flash offset zero. `dist/SHA256SUMS` identifies the packaged artifacts. Button GPIOs and the volume cap are configurable through menuconfig. This build has been tested on the CS43131 unit; the PCM5102 variant is not verified.
 
-A full original flash backup is kept locally at `backups/factory-020000000001.bin`. To restore with ESP-IDF’s Python environment:
+Keep an original flash backup locally before replacing factory firmware. The example recovery path is `backups/factory-backup.bin`. To restore with ESP-IDF’s Python environment:
 
 ```sh
-python -m esptool --chip esp32s3 --port /dev/cu.usbmodemDEVICE write_flash 0 backups/factory-020000000001.bin
+python -m esptool --chip esp32s3 --port /dev/cu.usbmodemDEVICE write_flash 0 backups/factory-backup.bin
 ```
 
 See [hardware evidence](docs/HARDWARE.md), [verification](docs/VERIFICATION.md) and [design](DESIGN.md). Published upstream source was a display/touch demo; this repository implements the player and preserves the original demo under `docs/`.
@@ -59,7 +59,7 @@ For local UI verification after IDF has fetched managed components, run `tools/r
 
 Open Browse → the header library button → WiFi → Set up WiFi. Join the temporary open PearlPod network shown on the player (no AP password), and the captive setup page should open automatically. If it does not, open http://192.168.4.1. Find networks or enter a hidden network name, enter its password, and save. The page reports connection progress. Setup and diagnostics also work at the player’s home-LAN IP while WiFi is on; there is no PearlPod login, session token or pairing. PearlPod remembers up to four networks in device storage; passwords never appear in diagnostic output. Use Connect for diagnostics to select the strongest nearby saved network, or Turn WiFi off when finished. Setup stays available during a failed connection until its five-minute inactivity timeout. Diagnostic connections last fifteen minutes; their read-only `http://<player-IP>/status` endpoint reports playback, power, memory and connection health. Sessions shut the radio down automatically when they expire. WiFi is always off at boot and is stopped before standby. Only 2.4 GHz networks are supported.
 
-The local sync candidate adds Your library → Sync now. A host prepares the Selected profile profile’s `PP:` playlists from existing NAS files with ffmpeg, then an HTTP trigger starts anonymous FTP delivery through lftp. The sync screen leads with the playlist and current song/album, shows overall progress and a measured whole-sync ETA, and replaces the estimate with a waiting message if transfer stalls. Completed playlists are published and checkpointed individually; retry reuses them after interruption. Covers are embedded and available lyrics are carried over. Now Playing offers Lyrics when present. See [sync setup](syncer/README.md), [status and interruption checks](docs/SYNC-STATUS-EXECUTION.md) and [implementation evidence](docs/SYNC-IMPLEMENTATION.md). Existing local playlist-file playback remains available. See [WiFi design and verification](docs/WIFI-EXECUTION.md) for borrowed patterns, limits and evidence.
+The local sync candidate adds Your library → Sync now. A host prepares the selected Plex profile’s `PP:` playlists from existing NAS files with ffmpeg, then an HTTP trigger starts anonymous FTP delivery through lftp. The sync screen leads with the playlist and current song/album, shows overall progress and a measured whole-sync ETA, and replaces the estimate with a waiting message if transfer stalls. Completed playlists are published and checkpointed individually; retry reuses them after interruption. Covers are embedded and available lyrics are carried over. Now Playing offers Lyrics when present. See [sync setup](syncer/README.md), [status and interruption checks](docs/SYNC-STATUS-EXECUTION.md) and [implementation evidence](docs/SYNC-IMPLEMENTATION.md). Existing local playlist-file playback remains available. See [WiFi design and verification](docs/WIFI-EXECUTION.md) for borrowed patterns, limits and evidence.
 
 WiFi hardware status: the first image exposed a task-stack overflow. USB-window recovery restored device-tested c9e6efd, confirmed by the user and playback diagnostics. The current local firmware adds bounded WiFi sessions, crash-delayed networking, deep sleep and a revised RAM budget. Hardware evidence and remaining checks are in [power verification](docs/POWER-EXECUTION.md). See [verification](docs/VERIFICATION.md).
 
@@ -88,4 +88,8 @@ The current device is on the recovered working firmware; microSD import is inclu
 
 ## Personalization
 
-Firmware uses a neutral fallback. Copy `theme-packs/Default/` into the card’s `music/` folder for Listener’s two anime packs with rotating welcome/farewell scenes. The name, favorite themes, palette, pictures and phrases live on the card, separate from firmware. See [theme-pack installation and format](docs/THEME-PACKS.md).
+Firmware uses a neutral fallback. Copy `theme-packs/Default/` into the card’s `music/` folder for neutral example packs with rotating welcome/farewell scenes. The name, favorite themes, palette, pictures and phrases live on the card, separate from firmware. See [theme-pack installation and format](docs/THEME-PACKS.md).
+
+## Public source and privacy
+
+Source is public under PolyForm Noncommercial 1.0.0. [Firmware downloads](https://github.com/open-horizon-labs/pearlpod-releases/releases), [web installer](https://hiphi.audio/flash/pearlpod/) and three original palette/greeting packs are available. Personal artwork packs, household profiles, device identifiers and private setup records are excluded. `theme-packs/Default` contains neutral synthetic artwork for test coverage; it is not a personal pack.

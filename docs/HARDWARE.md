@@ -1,8 +1,8 @@
 # Hardware evidence
 
-Physical unit MAC 02:00:00:00:00:01, ESP32-S3 revision 0.2, embedded 8 MB PSRAM, 16 MB quad flash. Serial /dev/cu.usbmodemDEVICE. Read with esptool 4.12.0.
+Tested unit: ESP32-S3 revision 0.2, embedded 8 MB PSRAM, 16 MB quad flash. Read with esptool 4.12.0.
 
-Factory full flash backup: backups/factory-020000000001.bin, 16777216 bytes, SHA256 2f2ec8ff739f0f6a111620a16195461349c3ca119452022c2bd75f45dd155097. This backup is deliberately gitignored.
+A 16 MB factory flash backup was retained privately and is excluded from this repository.
 
 Factory serial boot identifies CS43131 and SDHC 3840 MB. New firmware reads CS43131 ID 43 13 10 at I2C address 0x30. No DAC guess remains for this unit.
 

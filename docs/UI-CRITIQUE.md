@@ -22,6 +22,6 @@ Priorities: reserve error space; enlarge navigation and play/pause; include cove
 
 Detector: real invocation on main/ui.c, exit 0, [] / zero findings. The markup-oriented detector has little coverage of C/LVGL. No ignore file, browser route, overlay, live server or browser temporary files. Local LVGL raster captures are the visual evidence for refinement. Questions skipped: user explicitly selected the improvements and requested implementation in this combined workflow.
 
-Delight thesis: Listener should recognize her music by its cover and feel that each touch confidently follows her intent, with anime character supplied by the existing illustrated fallback.
+Delight thesis: Listener should recognize her music by its cover and feel that each touch confidently follows her intent, with visual character supplied by the existing illustrated fallback.
 
 Two passes per surface: browsing first adds cover recognition and meaningful swipe/back paths, then active-track accents and restored position; Now Playing first elevates artwork and pause, then expressive playing/paused state and readable long titles. These ship as useful details without delaying boot or adding sound effects.

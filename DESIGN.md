@@ -1,6 +1,6 @@
 ---
 name: PearlPod
-description: Listener's personal anime-inspired offline music companion
+description: Listener's custom theme-inspired offline music companion
 colors:
   night-navy: "#101827"
   warm-cream: "#fff6dc"
@@ -65,7 +65,7 @@ components:
 
 ## Overview
 
-The embedded Operate surface is a personal anime music companion for Listener. Sample soundtrack and Sample collection are the user's confirmed imagery references. The current interface places expressive personal artwork within a quiet, readable listening surface.
+The embedded Operate surface is a custom theme music companion for Listener. Optional card-based themes provide personalization. The current interface places expressive personal artwork within a quiet, readable listening surface.
 
 This documents the current LVGL implementation in `main/ui.c`. Earlier physical checks confirmed rendering, audio, volume, and sleep/wake; physical touch accuracy and swipe behavior for this refinement remain pending. Source geometry and host rendering do not establish hardware gesture accuracy.
 
@@ -73,7 +73,7 @@ This documents the current LVGL implementation in `main/ui.c`. Earlier physical 
 
 - Recognizable album thumbnails lead browsing; large cover art leads listening.
 - Generous touch controls prioritize play/pause and keep navigation predictable.
-- Personal anime imagery provides fallback art while real covers load asynchronously.
+- Custom theme imagery provides fallback art while real covers load asynchronously.
 
 ## Colors
 
@@ -103,7 +103,7 @@ Action buttons have softly curved 14 px corners; list rows use 12 px corners. Ar
 
 **Browsing:** Albums pair thumbnails with music names, counts. Tracks show sequence numbers and identify the selected track. Vertical dragging explores each page. Album browsing supports left/right swipes for pages; on a track page, left advances pages and right returns to albums. Explicit page arrows and Back remain available. Now Playing also supports a right swipe to albums. Gesture handling consumes the touch release to avoid selecting a track after a swipe. Album page scroll positions and each album's track position are saved during navigation.
 
-**Artwork:** Only visible album rows request thumbnails. Decoding runs asynchronously; generation tokens discard stale results after navigation. Personal anime artwork remains visible when covers are absent or fail to decode. Now Playing requests the album cover or embedded artwork from the selected track. The same illustration greets Listener during the quick startup scan.
+**Artwork:** Only visible album rows request thumbnails. Decoding runs asynchronously; generation tokens discard stale results after navigation. Custom theme artwork remains visible when covers are absent or fail to decode. Now Playing requests the album cover or embedded artwork from the selected track. The same illustration greets Listener during the quick startup scan.
 
 **Navigation and feedback:** Browse footers offer Browse and Playing, with Browse selected in teal on the collection view. The header library control opens Albums, Artists, Folders, Playlists and Rescan card. Now Playing replaces those routes with larger transport and a header Back button. Short browse hints invite exploration or explain the return gesture; errors replace hints. Empty-state copy explains how to add albums. No seek bar, decorative animation, custom focus treatment, or in-device settings surface is implemented.
 

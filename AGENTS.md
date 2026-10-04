@@ -1,8 +1,8 @@
 # PearlPod
 
-Private personal firmware repository at open-horizon-labs/PearlPod for Listener’s CS43131 FakePod Nano. The product aim is that Listener independently chooses and enjoys her music.
+Public firmware repository at open-horizon-labs/PearlPod for the CS43131 FakePod Nano. The product aim is that listeners independently choose and enjoy their music.
 
-Work directly on main for now. Commit and push regularly at coherent checkpoints. No pull requests are needed yet. Build and test locally only; do not add hosted CI builds or publish releases unless requested. Keep repository visibility private.
+Work directly on main for now. Commit and push regularly at coherent checkpoints. No pull requests are needed yet. Build and test locally only; do not add hosted CI builds or publish releases unless requested. Repository source is public after a history scrub; personal packs and runtime configuration remain local and ignored.
 
 Use ESP-IDF v5.5.5 and the checked-in tools/build.sh and tools/check.sh. Preserve fast startup, offline microSD playback, touchscreen navigation, physical volume and hold controls. WiFi scan and setup are authorized. The user has authorized a local Plex export and sync spike, followed by a small container deployment. Follow docs/PLAYLIST-EXPORT-SYNC-DESIGN.md and docs/EXPORT-MEDIA-CONTRACT.md; keep Plex credentials on the host and preserve offline startup. Nightly charging automation requires verified hardware sensing. Borrow proven scanning/provisioning patterns from roon-knob and tdongle-tailnet-firmware, without coupling startup or offline playback to connectivity. Credentials belong in runtime configuration, never source or logs. Hardware and validation evidence are in docs/HARDWARE.md and docs/VERIFICATION.md.
 

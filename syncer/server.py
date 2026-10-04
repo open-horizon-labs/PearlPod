@@ -27,7 +27,7 @@ def refresh_all(publications, processing):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--plex-url',default='http://192.0.2.2:32400')
+    p.add_argument('--plex-url',default='http://127.0.0.1:32400')
     p.add_argument('--plex-token',type=Path,required=True)
     p.add_argument('--source-root',type=Path,default=Path('/share/Media/Music'))
     p.add_argument('--music',type=Path,required=True)

@@ -9,19 +9,19 @@ import time
 from datetime import datetime
 
 ROOT = Path(__file__).resolve().parent.parent
-IMAGE = ROOT / 'dist/known-working-c9e6efd.bin'
-EXPECTED_SHA = 'a6be8c85fe01303fe43d4c3b53ab167256759f2e20cd9c3a1ff62491d78a5860'
-DEVICE_MAC = '020000000001'
+IMAGE = ROOT / 'dist/known-working-e1e3b76.bin'
+EXPECTED_SHA = 'bed096a46f7fc45762b2fbc013e70e9abe526f70db7dd6565d2847871be872c1'
+
 
 def enumerate_ports():
     from serial.tools import list_ports
     return list_ports.comports()
 
-def normalize(value):
-    return ''.join(c for c in (value or '').lower() if c in '0123456789abcdef')
-
 def candidates(ports, port=None):
-    return [p.device for p in ports if p.vid == 0x303a and normalize(p.serial_number) == DEVICE_MAC and (port is None or p.device == port)]
+    # USB identity establishes an Espressif S3 interface, not an exact board.
+    # Never choose arbitrarily when multiple matching devices are connected.
+    matches = [p.device for p in ports if p.vid == 0x303a and getattr(p, 'pid', None) == 0x1001 and (port is None or p.device == port)]
+    return matches if len(matches) == 1 else []
 
 def run_attempts(attempts, port, image, log, *, enumerate_ports=enumerate_ports, run=subprocess.run, now=time.monotonic, sleep=time.sleep):
     for attempt in range(1, attempts + 1):
@@ -52,14 +52,14 @@ def run_attempts(attempts, port, image, log, *, enumerate_ports=enumerate_ports,
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--attempts', type=int, default=20)
-    parser.add_argument('--port', help='Optional port constraint; hardware identity is still checked')
+    parser.add_argument('--port', help='Optional port constraint; USB vendor/product identity is still checked')
     parser.add_argument('--check', action='store_true', help='Verify recovery image and report detection without flashing')
     args = parser.parse_args()
     if not 1 <= args.attempts <= 100:
         parser.error('--attempts must be between 1 and 100')
     if hashlib.sha256(IMAGE.read_bytes()).hexdigest() != EXPECTED_SHA:
         raise SystemExit('Recovery image checksum mismatch; no flash attempted.')
-    print('Recovery image verified: device-tested commit c9e6efd; app only, preferences preserved.', flush=True)
+    print('Recovery image verified: device-tested application e1e3b76; app only, preferences preserved.', flush=True)
     if args.check:
         print('Matching player ports:', ', '.join(candidates(enumerate_ports(), args.port)) or 'none')
         return 0
