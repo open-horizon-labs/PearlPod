@@ -1,4 +1,4 @@
-menu "Listener Player"
+menu "PearlPod"
 config PEARL_BUTTON_UP
     int "Volume-up / power GPIO"
     range 0 48
