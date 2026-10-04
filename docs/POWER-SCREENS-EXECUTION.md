@@ -12,7 +12,7 @@
 - Fast, offline startup: met in source and host transition checks; artwork is compiled into the app and browsing replaces welcome immediately on library readiness. Startup requests a render, not a dwell timer or extra decode/read.
 - Visible shutdown feedback and recoverable failure: met under deterministic host hardware stubs. Farewell is rendered before trace/sync/network/audio cleanup. Card, sync, network and wake-configuration failure returns to the current library view with recovery copy.
 - Stable navigation and resource lifetime: met in host UI checks. Hidden controls and gestures cannot navigate or start music; late artwork is freed; failed shutdown restores scroll position; a scan completion cannot replace farewell.
-- Installed device behavior: pending. No PearlPod USB port was detected during this checkpoint, so no firmware was flashed.
+- Installed device behavior: app-only flash completed on October 4, 2026. Esptool verified the write; three serial queries reported playback ready, no audio error, screen awake, and USB connected. Physical welcome/farewell appearance and the held-button cycle still require observation.
 
 ## Changes
 
@@ -29,7 +29,7 @@
 | A sync-triggered scan replaces farewell or sleeps while scanning | Retired at deterministic host/source scope | Check scan ownership only once before cleanup | Host UI finishes scanning during closing; standby test initiates a scan from sync cleanup and verifies sleep is cancelled before audio shutdown |
 | Manual screen lock prevents farewell, or idle shutdown lights a dark room | Retired by host checks | Wake the display for every automatic shutdown, or never wake it for manual power-off | Manual dark-screen shutdown asserts wake before farewell; automatic dark-screen shutdown asserts no wake/render/dwell |
 | Firmware no longer builds or power blockers regress | Retired by local checks | Add UI code without compiling the real hardware path | ESP-IDF v5.5.5 build, `tools/check.sh`, and production LVGL harness pass |
-| Physical panel timing, held-button power cycle and startup duration | Accepted with rationale | Claim host rendering proves hardware operation | No player serial USB device available. A real panel/boot timing observation still requires installation; no new hardware timing claim is made |
+| Physical panel timing, held-button power cycle and startup duration | Accepted with rationale | Claim host rendering proves hardware operation | The app is now installed and responds over serial, but a real panel/boot timing and physical button observation remains outstanding; no new hardware timing claim is made |
 
 The host standby test compiles the actual final routines from `main/main.c` against deterministic hardware stubs. It exercises ordering and early-return branches but does not simulate the ESP-IDF driver, FreeRTOS scheduling or electrical power loss. The LVGL harness executes production UI code, including existing browsing, playback, lyrics and sync-state checks.
 
@@ -39,7 +39,7 @@ The host standby test compiles the actual final routines from `main/main.c` agai
 
 ## Needs human / device verification
 
-Installation is pending. After an app-only flash, observe the real welcome-to-library transition, manual shutdown while the screen is both awake and locked, and the existing long-hold wake cycle. Confirm farewell is readable and no unwanted delay appears on startup. Existing USB and power behavior has host coverage; physical device behavior remains unverified at this checkpoint.
+Installation completed using an app-only write at `0x10000`, preserving the bootloader, partition table and NVS. App image SHA-256: `9d9cd265e5ce66d44fcce65dbf3cb587edaa0be400f949f397bdac25cddcd6c5`. Observe the real welcome-to-library transition, manual shutdown while the screen is both awake and locked, and the existing long-hold wake cycle. Confirm farewell is readable and no unwanted delay appears on startup. The serial readback confirms `ready=1`, an empty playback error, `screen_asleep=0`, and live USB across three queries. No crash signature appeared in the bounded post-flash observation. Physical screen appearance and power cycling remain unverified; the ignored serial log is `backups/boot-power-screens-4d978a4.log`.
 
 ## Captured production UI
 
