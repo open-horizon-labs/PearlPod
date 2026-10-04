@@ -46,3 +46,5 @@ void pearl_ui_shutdown_begin(void);
 void pearl_ui_shutdown_cancel(const char *reason);
 
 void pearl_ui_theme_ready(void);
+
+void pearl_library_index_refresh(void);

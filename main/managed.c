@@ -264,6 +264,9 @@ static int catalog_format(const char *sha){
   cJSON *row=cJSON_Parse(line);if(!row)return 0;
   cJSON *format=cJSON_GetObjectItem(row,"format");int result=cJSON_IsNumber(format)?format->valueint:0;cJSON_Delete(row);return result;
 }
+void pearl_managed_revision(char out[65]) {
+ activation record={0};read_activation(&record);memcpy(out,record.active,65);
+}
 bool pearl_managed_is_active(const char *sha) {
   activation record = {0};
   return sha && read_activation(&record) && !strcmp(record.active, sha);

@@ -18,6 +18,8 @@
 #include "lvgl.h"
 #include "player.h"
 #include "theme.h"
+#include "library_index.h"
+#include "managed.h"
 #include "network.h"
 #include "power.h"
 #include "power_policy.h"
@@ -701,8 +703,16 @@ static void library_task(void *arg)
     }
     const char *err="";
     if(e!=ESP_OK)err="Card not ready. Insert a FAT32 card and restart.";
-    else if(pearl_library_scan(&music,"/sdcard/music"))err="Add a music folder to your card, then restart.";
-    else {pearl_audio_start(&music);audio_started=true;}
+    else {
+        char revision[65];pearl_managed_revision(revision);
+        bool cached=pearl_index_load(&music,"/sdcard/music",revision);
+        ESP_LOGW("pearl","Library index %s",cached?"loaded":"missing or invalid; scanning");
+        if(!cached&&pearl_library_scan(&music,"/sdcard/music"))err="Add a music folder to your card, then restart.";
+        else {
+            if(!cached&&!pearl_index_save(&music,"/sdcard/music",revision))ESP_LOGW("pearl","Library index save failed; next boot will scan");
+            pearl_audio_start(&music);audio_started=true;
+        }
+    }
     if(example_lvgl_lock(-1)){pearl_ui_ready(&music,err);example_lvgl_unlock();}
     atomic_store(&library_albums,music.album_count);atomic_store(&library_tracks,music.track_count);
     pearl_network_init();
@@ -714,13 +724,20 @@ static void library_task(void *arg)
 static void rescan_task(void *arg){
     if(!audio_started||!pearl_audio_detach()){if(example_lvgl_lock(-1)){pearl_ui_ready(&music,"Cannot rescan now. Restart with the card inserted.");example_lvgl_unlock();}rescan_running=false;vTaskDelete(NULL);return;}
     if(example_lvgl_lock(-1)){pearl_ui_scanning();example_lvgl_unlock();}
+    if(!pearl_index_invalidate("/sdcard/music"))ESP_LOGW("pearl","Cannot invalidate index before rescan");
     pearl_library next={0};int result=pearl_library_scan(&next,"/sdcard/music");
-    if(!result){if(pearl_library_lock()){pearl_library old=music;music=next;pearl_library_free(&old);pearl_library_unlock();}else{pearl_library_free(&next);result=-3;}}
+    if(!result){char revision[65];pearl_managed_revision(revision);if(!pearl_index_save(&next,"/sdcard/music",revision))ESP_LOGW("pearl","Library index save failed after rescan");if(pearl_library_lock()){pearl_library old=music;music=next;pearl_library_free(&old);pearl_library_unlock();}else{pearl_library_free(&next);result=-3;}}
     atomic_store(&library_albums,music.album_count);atomic_store(&library_tracks,music.track_count);
     pearl_audio_attach(&music);
     if(example_lvgl_lock(-1)){pearl_ui_ready(&music,result?"Scan failed. Previous library kept; check card or free memory.":"");example_lvgl_unlock();}
     ESP_LOGW("pearl","Rescan result=%d albums=%u tracks=%u",result,music.album_count,music.track_count);
     rescan_running=false;vTaskDelete(NULL);
+}
+void pearl_library_index_refresh(void){
+ if(!pearl_library_lock())return;
+ char revision[65];pearl_managed_revision(revision);
+ bool saved=pearl_index_save(&music,"/sdcard/music",revision);pearl_library_unlock();
+ ESP_LOGW("pearl","Unchanged library index saved=%d",saved);
 }
 void pearl_library_rescan(void){if(pearl_trace_sd_busy())return;if(atomic_exchange(&rescan_running,true))return;if(xTaskCreate(rescan_task,"rescan",8192,NULL,2,&rescan_task_handle)!=pdPASS)rescan_running=false;}
 static void buttons_task(void *arg)

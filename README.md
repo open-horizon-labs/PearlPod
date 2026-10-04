@@ -12,6 +12,8 @@ Volume and the selected track survive restart. Resume is paused at the beginning
 
 ## Music and artwork
 
+Normal boot loads a saved library index instead of rescanning music. The first boot without a valid index scans and saves it; changed syncs and Rescan card rebuild it. After manually adding or editing music on the card, tap Rescan card. See [library index behavior](docs/LIBRARY-INDEX.md).
+
 Put music under the card’s `music/` directory. Albums group by album and album-artist tags, with artist and directory fallbacks. Artists and Folders provide other ways to find music. MP3 ID3v1/v2.2/v2.3/v2.4, native/Ogg FLAC comments and WAV INFO supply tags on the device; preparation is optional. Disc/track tags order an album before natural filename sorting (`2` precedes `10`).
 
 There are no fixed 255-folder/track, 2,048-track or 12-level limits. Indexes grow in PSRAM while reserving memory for playback. Paths must fit within 511 UTF-8 bytes. If indexing runs out of memory, scanning fails explicitly; rescanning retains the previous index. Skipped paths and playlist entries produce a visible count. Browsing never times out, and long names scroll.

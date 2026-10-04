@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "ftp.h"
+#include "library_index.h"
 #include "managed.h"
 #include "mdns.h"
 #include "network.h"
@@ -167,7 +168,7 @@ static void choose_library(char *url,unsigned size,const char *saved,bool dns) {
 }
 static void task(void *arg) {
   (void)arg;
-  bool ftp = false, dns = false, success = false, card_full = false, audio_released=false, refresh_library=true;
+  bool ftp = false, dns = false, success = false, card_full = false, audio_released=false, refresh_library=true, index_invalidated=false;
   int failure=6;
   int64_t session_start=esp_timer_get_time();
   stage = 1;
@@ -298,6 +299,10 @@ static void task(void *arg) {
     if(run_result<0)break;
     last = now;
     unsigned bytes=pearl_ftp_received_bytes();
+    if(bytes&&!probe_url[0]&&!index_invalidated){
+      if(!pearl_index_invalidate("/sdcard/music")){failure=6;ESP_LOGE("sync","Cannot invalidate library index");break;}
+      index_invalidated=true;
+    }
     taskENTER_CRITICAL(&progress_lock);
     pearl_progress_sample(&content_progress,pearl_ftp_file_received(),(uint32_t)(now/1000));
     taskEXIT_CRITICAL(&progress_lock);
@@ -371,6 +376,7 @@ done:
     ESP_LOGW("sync","Playback restored=%d internal_free=%u",restored,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
     if(!restored){success=false;failure=6;}
     else if(refresh_library&&(success||(!probe_url[0]&&atomic_load(&transferred))))pearl_library_rescan();
+    else if(success&&index_invalidated)pearl_library_index_refresh();
   }
   stage = success ? 5 : cancel ? 13 : card_full ? 8 : failure;
   pearl_trace_probe(false);probe_url[0]=0;

@@ -7,6 +7,7 @@ bool pearl_managed_load(pearl_library *l, const char *root,
                         pearl_add_track_fn add);
 bool pearl_managed_activate(const char *sha);
 bool pearl_managed_is_active(const char *sha);
+void pearl_managed_revision(char out[65]);
 /* Conservative cleanup: only managed hash names outside active/previous catalogs. */
 bool pearl_managed_collect(void);
 bool pearl_managed_candidate(pearl_library *l, const char *sha,

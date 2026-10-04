@@ -30,3 +30,6 @@ python3 tests/test_shutdown.py
 
 cc -std=c17 -D_DARWIN_C_SOURCE -DPEARL_THEME_TEST -Wall -Wextra -Werror -fsanitize=address,undefined -I main -I vendor tests/test_theme.c main/theme.c vendor/tomlc17.c -lm -o /tmp/pearl-theme-tests
 /tmp/pearl-theme-tests
+
+cc -D_DARWIN_C_SOURCE -DPEARL_INDEX_TEST -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_library_index.c main/library_index.c main/library.c main/metadata.c main/playlist.c -o /tmp/pearl-index-tests
+/tmp/pearl-index-tests
