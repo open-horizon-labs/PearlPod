@@ -41,3 +41,6 @@ void pearl_ui_start(void);
 void pearl_ui_ready(pearl_library *lib,const char *error);
 
 void pearl_ui_power(bool asleep);
+// Called with the LVGL lock held. Cancel restores the current library view.
+void pearl_ui_shutdown_begin(void);
+void pearl_ui_shutdown_cancel(const char *reason);

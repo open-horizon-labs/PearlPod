@@ -53,7 +53,7 @@ void pearl_power_usb_activity(void){atomic_store(&usb_host_seen_ms,(uint32_t)(es
 bool pearl_power_usb_guard(uint32_t now,bool host_connected){if(host_connected){atomic_store(&usb_host_seen_ms,now);atomic_store(&usb_host_seen,true);}return pearl_usb_host_guard(host_connected,atomic_load(&usb_host_seen),now,atomic_load(&usb_host_seen_ms),CONFIG_PEARL_IDLE_SLEEP_SEC*1000u);}
 void pearl_library_counts(unsigned *albums,unsigned *tracks){*albums=atomic_load(&library_albums);*tracks=atomic_load(&library_tracks);}
 static void display_sleep(bool asleep,bool manual);
-static void enter_standby(void);
+static void enter_standby(bool manual);
 
 
 
@@ -651,6 +651,9 @@ void app_main(void)
     if (example_lvgl_lock(-1)) {
 
         pearl_ui_start();
+        // Present the welcome frame before even a very fast card scan can
+        // replace it. No splash timer or minimum startup dwell.
+        lv_refr_now(NULL);
         // lv_demo_music();        /* A modern, smartphone-like music player demo. */
         // lv_demo_stress();       /* A stress test for LVGL. */
         // lv_demo_benchmark();    /* A demo to measure the performance of LVGL or to compare different settings. */
@@ -726,7 +729,7 @@ static void buttons_task(void *arg)
         if(u==BUTTON_SHORT){pearl_audio_volume(-2);ESP_LOGW("pearl","Volume down GPIO%d",up);}
         if(d==BUTTON_SHORT){pearl_audio_volume(2);ESP_LOGW("pearl","Volume up GPIO%d",down);}
         if(d==BUTTON_LONG){display_sleep(!screen_locked,!screen_locked);}
-        if(u==BUTTON_LONG)enter_standby();
+        if(u==BUTTON_LONG)enter_standby(true);
         pearl_state playback=pearl_audio_state();bool playing=playback.ready&&!playback.paused;
         if(playing||was_playing){paused_since=now;}
         was_playing=playing;
@@ -734,7 +737,7 @@ static void buttons_task(void *arg)
         pearl_power_input policy={.now=now,.last_activity=pearl_power_last_activity(),.paused_since=paused_since,.screen_timeout=CONFIG_PEARL_SCREEN_TIMEOUT_SEC*1000u,.idle_timeout=CONFIG_PEARL_IDLE_SLEEP_SEC*1000u,.playing=playing,.screen_asleep=screen_locked,.network=pearl_network_enabled(),.busy=pearl_sync_busy()||pearl_trace_sd_busy()||atomic_load(&rescan_running)||!atomic_load(&library_ready),.usb_connected=usb_power_present,.button_released=gpio_get_level(up)&&gpio_get_level(down),.deep_supported=pearl_power_deep_supported()};
         pearl_power_action action=pearl_power_decide(&policy);
         if(action==PEARL_POWER_SCREEN_SLEEP)display_sleep(true,false);
-        if(action==PEARL_POWER_DEEP_SLEEP){ESP_LOGW("pearl","Automatic sleep idle_ms=%lu paused_ms=%lu usb_connected=%d",(unsigned long)(now-policy.last_activity),(unsigned long)(now-policy.paused_since),usb_power_present);enter_standby();}
+        if(action==PEARL_POWER_DEEP_SLEEP){ESP_LOGW("pearl","Automatic sleep idle_ms=%lu paused_ms=%lu usb_connected=%d",(unsigned long)(now-policy.last_activity),(unsigned long)(now-policy.paused_since),usb_power_present);enter_standby(false);}
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
@@ -745,15 +748,41 @@ static void display_sleep(bool asleep,bool manual){
     else{panel_qspi_amoled_sleep(player_panel,false);vTaskDelay(pdMS_TO_TICKS(120));esp_lcd_panel_disp_on_off(player_panel,true);screen_locked=false;screen_manual=false;pearl_ui_power(false);lv_obj_invalidate(lv_scr_act());}
     example_lvgl_unlock();
 }
-static void enter_standby(void){
+static void standby_cancel(const char *reason,bool visible){
+    ESP_LOGW("pearl","%s",reason);
+    if(visible&&example_lvgl_lock(-1)){pearl_ui_shutdown_cancel(reason);example_lvgl_unlock();}
+    pearl_power_activity();
+}
+static void enter_standby(bool manual){
+    // A scan owns the library/audio resources until its worker finishes.
+    if(!atomic_load(&library_ready)||atomic_load(&rescan_running)){pearl_power_activity();return;}
+    bool visible=manual||!atomic_load(&screen_locked);
+    if(visible){
+        if(atomic_load(&screen_locked))display_sleep(false,false);
+        if(example_lvgl_lock(-1)){
+            pearl_ui_shutdown_begin();
+            lv_refr_now(NULL);
+            // The final QSPI DMA flush can outlive lv_refr_now. Give it a bounded
+            // chance to finish before any later panel power-down.
+            lv_disp_t *disp=lv_disp_get_default();
+            for(unsigned i=0;i<50&&disp->driver->draw_buf->flushing;i++)vTaskDelay(pdMS_TO_TICKS(2));
+            example_lvgl_unlock();
+        }
+    }
+    int64_t shown_at=esp_timer_get_time();
     pearl_trace_cancel();
     for(unsigned i=0;i<250&&pearl_trace_sd_busy();i++)vTaskDelay(pdMS_TO_TICKS(20));
-    if(pearl_trace_sd_busy()){pearl_power_activity();return;}
-    if(!pearl_sync_shutdown()){ESP_LOGW("pearl","Sync closing; hold again to sleep.");pearl_power_activity();return;}
-    if(!pearl_network_shutdown()){ESP_LOGW("pearl","WiFi shutdown pending; hold again to sleep.");pearl_power_activity();return;}
+    if(pearl_trace_sd_busy()){standby_cancel("Card busy. Hold again to turn off.",visible);return;}
+    if(!pearl_sync_shutdown()){standby_cancel("Sync closing. Hold again to turn off.",visible);return;}
+    if(!pearl_network_shutdown()){standby_cancel("WiFi closing. Hold again to turn off.",visible);return;}
+    if(atomic_load(&rescan_running)){standby_cancel("Scanning card. Hold again when ready.",visible);return;}
     const int up=CONFIG_PEARL_BUTTON_UP;
-    if(pearl_power_deep_supported()&&esp_sleep_enable_ext0_wakeup(up,0)!=ESP_OK){ESP_LOGW("pearl","Wake configuration failed; staying awake.");pearl_power_activity();return;}
-    pearl_audio_shutdown();display_sleep(true,true);
+    if(pearl_power_deep_supported()&&esp_sleep_enable_ext0_wakeup(up,0)!=ESP_OK){standby_cancel("Cannot turn off. Try holding again.",visible);return;}
+    pearl_audio_shutdown();
+    // Shutdown alone has a short readable farewell; startup never waits for it.
+    int64_t remaining=600000-(esp_timer_get_time()-shown_at);
+    if(visible&&remaining>0)vTaskDelay(pdMS_TO_TICKS((remaining+999)/1000));
+    display_sleep(true,true);
     while(!gpio_get_level(up))vTaskDelay(pdMS_TO_TICKS(20));
     if(pearl_power_deep_supported()){
         rtc_gpio_pullup_en(up);rtc_gpio_pulldown_dis(up);gpio_hold_en(GPIO_NUM_41);gpio_deep_sleep_hold_en();

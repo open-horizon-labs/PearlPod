@@ -26,3 +26,4 @@ python3 tests/test_recovery.py
 
 cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_power_policy.c main/power_policy.c -o /tmp/pearl-power-policy
 /tmp/pearl-power-policy
+python3 tests/test_shutdown.py
