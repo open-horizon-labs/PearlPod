@@ -2,7 +2,7 @@
 # Download private release assets; verify before replacing local firmware.
 set -eu
 cd "$(dirname "$0")/.."
-release_tag=${1:-v0.1.0}
+release_tag=${1:-v0.3.0}
 command -v gh >/dev/null || { echo 'Install GitHub CLI and sign in with access to Muness/PearlPod.' >&2; exit 1; }
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT HUP INT TERM
