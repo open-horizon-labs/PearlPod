@@ -12,6 +12,8 @@ A real transfer crashed at 5.3 MB with a NULL device in `resume_dev_in_isr`, thr
 
 After removing the panic, transfer tracing established the next failure: FAT's rename returns `EEXIST` when lftp publishes over an existing file. `vendor/ftp/replace.c` preserves the previous file under a hidden backup and writes a flushed replacement journal before moving names. Startup recovers an interrupted rename before scanning the library. Tests emulate FAT overwrite rejection, a failed second rename, and resets before/after final publication. A journal failure never silently reports success. Completed media on older cards without receipts is reused by length; a known changed identity still forces replacement. Subsequent completed receipts carry current identities.
 
+A full-card retry exposed an inherited FTP send bug: nonblocking `send()` may accept only part of a 32 KiB receipt buffer. The old code retried the entire buffer or reset the connection instead of advancing the sent prefix. The same assumption existed in listings and control replies. All three now share a bounded send helper that advances offsets, waits through `EAGAIN`, handles interruption and fails cleanly on disconnection/timeout. `tests/test_ftp_send.py` compiles the production helper against deterministic partial sends and backpressure.
+
 The runner retains a bounded lftp error tail in `/status`. This contains anonymous FTP paths and file details, never the Plex token. The player logs each completed playlist and the chosen runner. Console status includes saved-playlist count, progress, completion and full content text.
 
 ## Evidence collected
@@ -21,4 +23,5 @@ The runner retains a bounded lftp error tail in `/status`. This contains anonymo
 - Firmware UI remained ready at about 858 ms. WiFi starts only on demand.
 - A cancelled hardware run received more than 75 MB without repeating the SPI panic. The retry reused approximately 235 MB already present.
 - A subsequent real transfer published P!nk plus both new test playlists. Forced USB chip reset during the next playlist's transfer, then enumerated the card after reboot: both test playlists contained one track, P!nk contained thirty, partial hidden media stayed unlisted. Playing each test playlist advanced playback to three seconds with no decoder error.
-- Final full transfer and no-op verification are still pending at this checkpoint; do not interpret this document as completion evidence until the final run below is recorded.
+- The complete hardware transfer succeeded: 345,004,709 missing bytes across 141 files; inventory 1.127 s, staging 1.135 s, lftp 862.090 s (about 0.400 MB/s including file/control overhead). Both endpoints reported completion, four playlists saved, activation succeeded, then the card rescanned to six albums and ninety-one unique songs. This is a functional result, not a claim of maximum throughput.
+- Playlist-edit and no-op hardware checks remain pending while the newly discovered receipt-send issue is repaired.

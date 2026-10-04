@@ -5,6 +5,7 @@ cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main -I vendor tests/te
 : "${IDF_PATH:?Source ESP-IDF 5.5.5 export.sh first}"
 python tests/test_spi_race.py
 python tests/test_sync_discovery.py
+python tests/test_ftp_send.py
 cc -Wall -Wextra -Werror -fsanitize=address,undefined -Drename=pearl_test_rename -I vendor/ftp tests/test_replace.c vendor/ftp/replace.c -o /tmp/pearl-replace-tests
 /tmp/pearl-replace-tests
 cc -Wno-deprecated-declarations -fsanitize=address,undefined -I "$IDF_PATH/components/json/cJSON" -c "$IDF_PATH/components/json/cJSON/cJSON.c" -o /tmp/pearl-cjson.o

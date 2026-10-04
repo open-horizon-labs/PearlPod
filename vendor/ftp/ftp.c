@@ -436,108 +436,47 @@ static ftp_result_t ftp_wait_for_connection (int32_t l_sd, int32_t *n_sd, uint32
 }
 
 //-----------------------------------------------------------
-static void ftp_send_reply (uint32_t status, char *message) {
-	if (!message) {
-		message = "";
-	}
-	snprintf((char *)ftp_cmd_buffer, 4, "%"PRIu32, status);
-	strcat ((char *)ftp_cmd_buffer, " ");
-	strcat ((char *)ftp_cmd_buffer, message);
-	strcat ((char *)ftp_cmd_buffer, "\r\n");
-
+/* Nonblocking TCP may accept only a prefix, or temporarily accept nothing.
+ * Advance only by bytes actually sent; never duplicate a prefix on retry. */
+static bool ftp_send_all(int socket,const void *data,size_t size) {
+    const unsigned char *bytes=data;
+    size_t sent=0;
+    uint64_t deadline=trace_clock()+5000000;
+    while(sent<size) {
+        int result=send(socket,bytes+sent,size-sent,0);
+        if(result>0)sent+=(size_t)result;
+        else if(result<0&&errno==EINTR) { /* Retry, retaining the deadline. */ }
+        else if(result<0&&(errno==EAGAIN||errno==EWOULDBLOCK))vTaskDelay(1);
+        else return false;
+        if(sent<size&&trace_clock()>=deadline){errno=ETIMEDOUT;return false;}
+    }
+    return true;
+}
+static void ftp_send_reply(uint32_t status,char *message) {
+    if(!message)message="";
+    snprintf((char *)ftp_cmd_buffer,FTP_MAX_PARAM_SIZE+FTP_CMD_SIZE_MAX,"%"PRIu32" %s\r\n",status,message);
     atomic_fetch_add(&reply_count,1);last_reply=status;
-	int32_t timeout = 200;
-	ftp_result_t result;
-	//uint32_t size = strlen((char *)ftp_cmd_buffer);
-	size_t size = strlen((char *)ftp_cmd_buffer);
-
-	ESP_LOGI(FTP_TAG, "Send reply: [%.*s]", size-2, ftp_cmd_buffer);
-
-	while (1) {
-		result = send(ftp_data.c_sd, ftp_cmd_buffer, size, 0);
-		if (result == size) {
-			if (status == 221) {
-				closesocket(ftp_data.d_sd);
-				ftp_data.d_sd = -1;
-				closesocket(ftp_data.ld_sd);
-				ftp_data.ld_sd = -1;
-				closesocket(ftp_data.c_sd);
-				ftp_data.substate = E_FTP_STE_SUB_DISCONNECTED;
-				ftp_close_filesystem_on_error();
-			}
-			else if (status == 426 || status == 451 || status == 550) {
-				closesocket(ftp_data.d_sd);
-				ftp_data.d_sd = -1;
-				ftp_close_filesystem_on_error();
-			}
-			ESP_LOGI(FTP_TAG, "Send reply: OK (%u)", size);
-			break;
-		}
-		else {
-			vTaskDelay(1);
-			if ((timeout <= 0) || (errno != EAGAIN)) {
-				// error
-				_ftp_reset();
-				ESP_LOGW(FTP_TAG, "Error sending command reply.");
-				break;
-			}
-		}
-		timeout -= portTICK_PERIOD_MS;
-	}
+    if(!ftp_send_all(ftp_data.c_sd,ftp_cmd_buffer,strlen((char *)ftp_cmd_buffer))) {
+        ESP_LOGW(FTP_TAG,"Control send failed errno=%d",errno);_ftp_reset();return;
+    }
+    if(status==221) {
+        closesocket(ftp_data.d_sd);ftp_data.d_sd=-1;
+        closesocket(ftp_data.ld_sd);ftp_data.ld_sd=-1;
+        closesocket(ftp_data.c_sd);ftp_data.c_sd=-1;
+        ftp_data.substate=E_FTP_STE_SUB_DISCONNECTED;
+        ftp_close_filesystem_on_error();
+    } else if(status==426||status==451||status==550) {
+        closesocket(ftp_data.d_sd);ftp_data.d_sd=-1;
+        ftp_close_filesystem_on_error();
+    }
 }
-
-//------------------------------------------
-static void ftp_send_list(uint32_t datasize)
-{
-	int32_t timeout = 200;
-	ftp_result_t result;
-
-	ESP_LOGI(FTP_TAG, "Send list data: (%"PRIu32")", datasize);
-
-	while (1) {
-		result = send(ftp_data.d_sd, ftp_data.dBuffer, datasize, 0);
-		if (result == datasize) {
-			ESP_LOGI(FTP_TAG, "Send OK");
-			break;
-		}
-		else {
-			vTaskDelay(1);
-			if ((timeout <= 0) || (errno != EAGAIN)) {
-				// error
-				_ftp_reset();
-				ESP_LOGW(FTP_TAG, "Error sending list data.");
-				break;
-			}
-		}
-		timeout -= portTICK_PERIOD_MS;
-	}
+static bool ftp_send_list(uint32_t size) {
+    if(ftp_send_all(ftp_data.d_sd,ftp_data.dBuffer,size))return true;
+    ESP_LOGW(FTP_TAG,"List send failed errno=%d",errno);_ftp_reset();return false;
 }
-
-//-----------------------------------------------
-static void ftp_send_file_data(uint32_t datasize)
-{
-	ftp_result_t result;
-	uint32_t timeout = 200;
-
-	ESP_LOGI(FTP_TAG, "Send file data: (%"PRIu32")", datasize);
-
-	while (1) {
-		result = send(ftp_data.d_sd, ftp_data.dBuffer, datasize, 0);
-		if (result == datasize) {
-			ESP_LOGI(FTP_TAG, "Send OK");
-			break;
-		}
-		else {
-			vTaskDelay(1);
-			if ((timeout <= 0) || (errno != EAGAIN)) {
-				// error
-				_ftp_reset();
-				ESP_LOGW(FTP_TAG, "Error sending file data.");
-				break;
-			}
-		}
-		timeout -= portTICK_PERIOD_MS;
-	}
+static bool ftp_send_file_data(uint32_t size) {
+    if(ftp_send_all(ftp_data.d_sd,ftp_data.dBuffer,size))return true;
+    ESP_LOGW(FTP_TAG,"File send failed errno=%d",errno);_ftp_reset();return false;
 }
 
 //------------------------------------------------------------------------------------------------
@@ -1205,7 +1144,7 @@ int ftp_run (uint32_t elapsed)
 			{
 				uint32_t listsize = 0;
 				ftp_result_t list_res = ftp_list_dir((char *)ftp_data.dBuffer, ftp_buff_size, &listsize);
-				if (listsize > 0) ftp_send_list(listsize);
+				if (listsize > 0 && !ftp_send_list(listsize))break;
 				if (list_res == E_FTP_RESULT_OK) {
 					ftp_send_reply(226, NULL);
 					ftp_data.state = E_FTP_STE_END_TRANSFER;
@@ -1226,7 +1165,7 @@ int ftp_run (uint32_t elapsed)
 				}
 				else {
 					if (readsize > 0) {
-						ftp_send_file_data(readsize);
+						if(!ftp_send_file_data(readsize))break;
 						ftp_data.total += readsize;
 						ESP_LOGI(FTP_TAG, "Sent %"PRIu32", total: %"PRIu32, readsize, ftp_data.total);
 					}
