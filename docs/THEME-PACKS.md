@@ -45,3 +45,12 @@ A second app flash and boot selected Midnight’s second scene (`Ready, Listener
 Aim: remove the farewell card read from the playback startup path while preserving fast, safe shutdown. The existing card worker reads it after publishing library-ready and enabling normal input. It reads into a private PSRAM buffer without holding the display lock, then publishes the complete buffer under that lock. No extra task or persistent service is added.
 
 Production allocator tests assert one image allocation before deferred preload and two afterward, failing the tempting shortcut of still loading both images at startup. Missing-image and allocation-failure paths retain the fallback. The production lifecycle UI harness renders shutdown before preload, publishes the completed image, confirms that the old rendered fallback remains valid, then renders the themed farewell. Existing navigation, lyrics, sleep/wake and shutdown-race tests pass. Review remains aligned; no theme-cache format or automatic theme rotation during playback is introduced. Device timing is measured separately after flashing.
+
+Device timing after the deferred preload change (`backups/theme-deferred-device.log`, ignored):
+
+- Classroom: welcome visible at 894 ms, themed welcome ready at 1,173 ms, library/playback ready at 1,329 ms; farewell cached later at 1,713 ms.
+- Midnight: welcome visible at 894 ms, themed welcome ready at 1,166 ms, library/playback ready at 1,321 ms; farewell cached later at 1,705 ms.
+- Prior cached-index boot reached library-ready at 1,503 ms. Deferring farewell removes approximately 180 ms from the startup path (about 12%); no promise of a larger gain is made.
+- USB `theme` and `status` commands answered while farewell pixels were still absent, confirming that playback/input readiness does not wait for preload. Later commands reported both image buffers present. Both boots retained six albums/91 songs, ready/paused playback without an error, screen awake, live USB and WiFi off.
+
+Risk retirement: startup double-loading fails the allocation-count test; partial publication is prevented by private-buffer reads plus atomic pointer publication; the production UI test confirms an early shutdown's fallback remains valid after publication. Missing image and allocation failure retain the neutral fallback. No sync or export ran during these measurements. Review disposition is continue: the measured benefit justifies the small deferred-loader change; further caching/prefetch architecture is deferred.
