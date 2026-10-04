@@ -93,7 +93,7 @@ def capacity(required, existing, free_bytes, catalog_bytes):
     return needed
 
 
-def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=None):
+def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=None, progress=False):
     ip=ipaddress.ip_address(address)
     if ip.version!=4 or not ip.is_private or ip.is_loopback or ip.is_multicast or ip.is_unspecified:
         raise ValueError('Expected a local Pod IPv4 address')
@@ -147,16 +147,43 @@ def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=
             forced.append('put '+quote(staged/name)+' -o '+quote('/'+name))
             # The size-only mirror skips these; replace them explicitly.
         marker=Path(directory)/'ready';marker.write_text(sha+'\n')
+        uploads=[
+            'mirror --reverse --ignore-time --no-perms --parallel=1 '+quote(staged)+(' /' if normal else ' /objects'),
+            *forced,
+        ]
+        if progress and normal:
+            from progress import plan, message
+            delta,final=plan(rows,staged,original_sizes,changed)
+            uploads=[]
+            directories=sorted({str(Path(name).parent) for name,_ in delta if name and str(Path(name).parent)!='.'})
+            uploads.append('set cmd:fail-exit no')
+            for parent in directories:uploads.append('mkdir -p '+quote('/'+parent))
+            uploads.append('set cmd:fail-exit yes')
+            checkpoint=dict(previous)
+            for name,info in delta:
+                if name:
+                    uploads.extend(['quote '+quote(message(info)), 'put '+quote(staged/name)+' -o '+quote('/'+name)])
+                    checkpoint[name]=identities[name]
+                else:
+                    saved=Path(directory)/('receipt-'+str(info['i'])+'.json')
+                    saved.write_text(json.dumps(checkpoint))
+                    # A crash after this atomic receipt rename reuses the whole
+                    # completed playlist, including same-sized changed media.
+                    uploads.extend(['quote '+quote(message(dict(info,k='saving',q=info['q']-1))),
+                                    'put '+quote(saved)+' -o /.pearl/delivered.tmp',
+                                    'mv /.pearl/delivered.tmp /.pearl/delivered.json',
+                                    'quote '+quote(message(info))])
+            uploads.append('quote '+quote(message(final)))
         script='\n'.join([
             'set cmd:fail-exit yes', 'set cmd:move-background no',
             'set xfer:use-temp-file '+('yes' if normal else 'no'),
+            'set xfer:temp-file-name .in.*',
             'set net:timeout 15', 'set net:max-retries 2', 'set net:reconnect-interval-base 2',
             'set ftp:ssl-allow no', 'set ftp:passive-mode yes', 'set ftp:use-mlsd no',
             'set ftp:use-feat no', 'set ftp:use-site-utime no', 'set ftp:use-site-chmod no',
             f'open -u anonymous,pearlpod ftp://{ip}:{port}',
             'set cmd:fail-exit no', 'mkdir -p '+('.pearl/catalogs' if normal else 'objects catalogs'), 'set cmd:fail-exit yes',
-            'mirror --reverse --ignore-time --no-perms --parallel=1 '+quote(staged)+(' /' if normal else ' /objects'),
-            *forced,
+            *uploads,
             *(['put '+quote(delivered)+' -o /.pearl/delivered.tmp', 'mv /.pearl/delivered.tmp /.pearl/delivered.json'] if normal else []),
             'put '+quote(catalog)+' -o '+metadata+'/catalogs/'+sha,
             'put '+quote(marker)+' -o '+metadata+'/ready.tmp',

@@ -31,13 +31,13 @@ def main():
     publications=Publications(a)
     gate=threading.Lock(); state={'status':'idle'}
     threading.Thread(target=publications.poll,daemon=True).start()
-    def sync(address,port,free_bytes):
+    def sync(address,port,free_bytes,progress=False):
         try:
             state['status']='preparing'
             def upload(head):
                 state['status']='transferring'
                 state['transfer_trace']={}
-                sha=deliver(a.cache,head,address,port,free_bytes=free_bytes,trace=lambda metrics:state.update(transfer_trace=metrics))
+                sha=deliver(a.cache,head,address,port,free_bytes=free_bytes,trace=lambda metrics:state.update(transfer_trace=metrics),progress=progress)
                 state.update(status='uploaded',catalog=sha)
             publications.refresh(a.refresh_timeout, consume=upload)
         except Exception as e:
@@ -75,7 +75,7 @@ def main():
                 self.reply(503,{'error':'library preparing; retry after first export'});return
             if not gate.acquire(blocking=False):self.reply(409,{'error':'sync busy'});return
             state.pop('error',None);state.update(status='queued')
-            threading.Thread(target=sync,args=(address,port,free_bytes),daemon=True).start()
+            threading.Thread(target=sync,args=(address,port,free_bytes,type(data.get('progress_version')) is int and data.get('progress_version')==1),daemon=True).start()
             self.reply(202,{'status':'queued'})
     http=ThreadingHTTPServer(('0.0.0.0',a.port),Handler);http.daemon_threads=True
     z=Zeroconf()

@@ -1,6 +1,8 @@
 #include "ftp.h"
 #include "ftp_platform.h"
+#include "sync_progress.h"
 #include <signal.h>
+#include <string.h>
 #include <sys/resource.h>
 extern const char *MOUNT_POINT;
 extern void pearl_ftp_close(void);
@@ -8,6 +10,14 @@ extern unsigned pearl_ftp_received_bytes(void);
 extern void pearl_ftp_reset_progress(void);
 bool pearl_trace_ram_sink(void){return getenv("PEARL_FTP_RAM_PROBE")!=NULL;}
 static volatile sig_atomic_t stop;
+static bool progress_info(const char *json) {
+  pearl_transfer_info info;
+  if(!pearl_progress_parse(json,&info))return false;
+  const char *path=getenv("PEARL_PROGRESS_LOG");
+  if(path){FILE *log=fopen(path,"ab");if(!log)return false;fprintf(log,"%s\n",json);fclose(log);}
+  if(getenv("PEARL_FTP_CRASH_AFTER_PLAYLIST")&&!strcmp(info.kind,"saved"))stop=1;
+  return true;
+}
 static void stopping(int signal) {
   (void)signal;
   stop = 1;
@@ -22,6 +32,7 @@ int main(int argc, char **argv) {
   signal(SIGINT, stopping);
   if (!ftp_init())
     return 2;
+  pearl_ftp_set_progress_handler(progress_info);
   pearl_ftp_reset_progress();
   if(pearl_ftp_received_bytes()!=0)return 3;
   ftp_enable();

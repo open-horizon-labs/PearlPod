@@ -155,6 +155,7 @@ typedef enum {
     E_FTP_CMD_QUIT,
     E_FTP_CMD_APPE,
     E_FTP_CMD_NLST,
+    E_FTP_CMD_SITE,
     E_FTP_NUM_FTP_CMDS
 } ftp_cmd_index_t;
 
@@ -197,6 +198,10 @@ extern int ftp_timeout;
 #endif
 
 bool ftp_init (void);
+/* Optional, bounded content progress over the existing control connection. */
+typedef bool (*pearl_ftp_progress_handler)(const char *json);
+void pearl_ftp_set_progress_handler(pearl_ftp_progress_handler handler);
+unsigned pearl_ftp_file_received(void);
 void ftp_deinit (void);
 int ftp_run (uint32_t elapsed);
 bool ftp_enable (void);

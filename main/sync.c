@@ -37,12 +37,22 @@ void pearl_sync_trace(char *out,unsigned size) {
  snprintf(out,size,"bssid=%02x:%02x:%02x:%02x:%02x:%02x rssi=%d channel=%u phy_11n=%u radio_result=%d tx_before_qdbm=%d tx_after_qdbm=%d tx_result=%d ps_result=%d connect_us=%u discovery_us=%u trigger_us=%u marker_us=%u network_us=%u loops=%u loop_us=%u loop_max_us=%u yield_us=%u %s",ap.bssid[0],ap.bssid[1],ap.bssid[2],ap.bssid[3],ap.bssid[4],ap.bssid[5],ap.rssi,ap.primary,ap.phy_11n,radio,atomic_load(&tx_before),atomic_load(&tx_after),atomic_load(&tx_result),atomic_load(&ps_result),atomic_load(&connect_us),atomic_load(&discovery_us),atomic_load(&trigger_us),atomic_load(&marker_us),atomic_load(&network_us),atomic_load(&loop_calls),atomic_load(&loop_us),atomic_load(&loop_max_us),atomic_load(&yield_us),ftp);
 }
 static atomic_uint elapsed, quiet, transferred;
+static pearl_transfer_progress content_progress;
+static portMUX_TYPE progress_lock=portMUX_INITIALIZER_UNLOCKED;
+static bool content_update(const char *json) {
+  pearl_transfer_info info;
+  if(!pearl_progress_parse(json,&info))return false;
+  taskENTER_CRITICAL(&progress_lock);
+  bool ok=pearl_progress_update(&content_progress,&info,(uint32_t)(esp_timer_get_time()/1000));
+  taskEXIT_CRITICAL(&progress_lock);
+  return ok;
+}
 static const char *messages[] = {
  "Ready to sync\n\nAdd PP: playlists in Plex. Keep the library computer running. Pause music before starting.",
  "Connecting to WiFi\nUsing your saved networks.",
  "Finding your library\nLooking for the library computer on WiFi.",
  "Waiting for your library\nThe computer is checking which files are needed.",
- "Checking your music\nVerifying the update before adding it.",
+ "Updating your library\nAdding playlists, artwork and lyrics.",
  "Your music is ready!\nOpen Playlists to listen. WiFi is turning off.",
  "Sync stopped\nYour existing music is safe. Check the library computer, then try again.",
  "Pause your music first\nThen tap Start sync again.",
@@ -55,14 +65,45 @@ static const char *messages[] = {
  "Connection lost\nCheck WiFi, then try again. Your existing music is safe.",
  "Sync timed out\nCheck the library computer, then try again. Your existing music is safe."
 };
+pearl_sync_view pearl_sync_snapshot(void) {
+  pearl_transfer_progress progress;
+  taskENTER_CRITICAL(&progress_lock);progress=content_progress;taskEXIT_CRITICAL(&progress_lock);
+  pearl_sync_view view={0};unsigned current=atomic_load(&stage);
+  if(current==3) {
+    pearl_progress_view(&progress,(uint32_t)(esp_timer_get_time()/1000),&view);
+    if(!progress.known&&atomic_load(&transferred)) {
+      snprintf(view.detail,sizeof(view.detail),"Receiving playlist updates");
+      snprintf(view.timing,sizeof(view.timing),"%s",atomic_load(&quiet)>=15?"Waiting for the computer...":"Time estimate unavailable");
+    }
+  } else {
+    const char *message=messages[current],*split=strchr(message,'\n');
+    snprintf(view.title,sizeof(view.title),"%.*s",split?(int)(split-message):(int)strlen(message),message);
+    snprintf(view.context,sizeof(view.context),"%s",split?split+1:"");
+    if(current==0)snprintf(view.detail,sizeof(view.detail),"Bring your playlists along");
+    if(current==4) {
+      snprintf(view.title,sizeof(view.title),"%s",progress.info.playlist[0]?progress.info.playlist:"Your playlists");
+      snprintf(view.detail,sizeof(view.detail),"Updating your library");
+      snprintf(view.timing,sizeof(view.timing),"Almost ready to listen");
+      view.determinate=true;view.percent=100;
+    } else if(current==5) {
+      view.complete=true;view.determinate=true;view.percent=100;
+      snprintf(view.detail,sizeof(view.detail),"%s",progress.known&&!progress.info.songs_total?"No new songs needed":"Your playlists are up to date");
+      if(progress.known&&!progress.info.playlist_count) {
+        view.complete=false;view.determinate=false;
+        snprintf(view.detail,sizeof(view.detail),"No PP: playlists found");
+        snprintf(view.context,sizeof(view.context),"Create a PP: music playlist in Plex, then sync again.");
+      }
+    }
+  }
+  view.playlists_ready=progress.info.playlists_ready;
+  if((current==6||current==13||current==14||current==15)&&progress.known&&atomic_load(&transferred))
+    snprintf(view.context,sizeof(view.context),"Completed songs are kept. Start sync to continue.");
+  view.busy=atomic_load(&busy);
+  return view;
+}
 void pearl_sync_status(char *out, unsigned size) {
- unsigned current=atomic_load(&stage), bytes=atomic_load(&transferred);
- if(current==3 && bytes) {
-  unsigned kb=bytes/1024;
-  snprintf(out,size,"Receiving your music\n%u.%u MB received\n\nLast data: %u sec ago\nElapsed: %u:%02u%s",kb/1024,(kb%1024)*10/1024,atomic_load(&quiet),atomic_load(&elapsed)/60,atomic_load(&elapsed)%60,atomic_load(&quiet)>=30?"\nWaiting for the computer...":"");
- } else if(atomic_load(&busy))
-  snprintf(out,size,"%s\n\nElapsed: %u:%02u",messages[current],atomic_load(&elapsed)/60,atomic_load(&elapsed)%60);
- else snprintf(out,size,"%s",messages[current]);
+  pearl_sync_view view=pearl_sync_snapshot();
+  snprintf(out,size,"%s\n%s\n%s\n%s\n%s",view.title,view.detail,view.context,view.count,view.timing);
 }
 void pearl_sync_cancel(void) { atomic_store(&cancel,true); }
 bool pearl_sync_busy(void) { return atomic_load(&busy); }
@@ -202,7 +243,7 @@ static void task(void *arg) {
     goto done;
   }
   char body[96];
-  snprintf(body, sizeof(body), "{\"ftp_port\":2121,\"free_bytes\":%llu}",
+  snprintf(body, sizeof(body), "{\"ftp_port\":2121,\"free_bytes\":%llu,\"progress_version\":1}",
            (unsigned long long)available);
   esp_http_client_set_method(client, HTTP_METHOD_POST);
   esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -236,6 +277,9 @@ static void task(void *arg) {
     if(run_result<0)break;
     last = now;
     unsigned bytes=pearl_ftp_received_bytes();
+    taskENTER_CRITICAL(&progress_lock);
+    pearl_progress_sample(&content_progress,pearl_ftp_file_received(),(uint32_t)(now/1000));
+    taskEXIT_CRITICAL(&progress_lock);
     bool made_progress=bytes!=prior_bytes;
     if(made_progress) { last_data=now;prior_bytes=bytes; }
     transferred=bytes;quiet=(now-last_data)/1000000;
@@ -299,7 +343,7 @@ done:
     bool restored=pearl_audio_restore_from_sync();
     ESP_LOGW("sync","Playback restored=%d internal_free=%u",restored,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
     if(!restored){success=false;failure=6;}
-    else if(success)pearl_library_rescan();
+    else if(success||(!probe_url[0]&&atomic_load(&transferred)))pearl_library_rescan();
   }
   stage = success ? 5 : cancel ? 13 : card_full ? 8 : failure;
   pearl_trace_probe(false);probe_url[0]=0;
@@ -314,6 +358,8 @@ static bool start_sync(const char *override) {
   pearl_trace_probe(override!=NULL);
   cancel=false;
   elapsed=quiet=transferred=0;
+  taskENTER_CRITICAL(&progress_lock);pearl_progress_reset(&content_progress);taskEXIT_CRITICAL(&progress_lock);
+  pearl_ftp_set_progress_handler(content_update);
   tx_before=tx_after=-1;tx_result=ps_result=0;
   loop_us=loop_max_us=loop_calls=yield_us=connect_us=discovery_us=trigger_us=marker_us=network_us=0;
   pearl_ftp_reset_progress();stage=1;

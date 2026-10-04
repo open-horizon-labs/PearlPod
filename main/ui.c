@@ -40,7 +40,7 @@ typedef struct {char path[PEARL_PATH];unsigned generation;int slot;} art_request
 typedef struct {uint8_t *pixels;unsigned generation;int slot;} art_result;
 static void render(void);
 static pearl_lyrics lyrics;
-static lv_obj_t *lyric_lines[3],*lyrics_button,*sync_info,*sync_action;
+static lv_obj_t *lyric_lines[3],*lyrics_button,*sync_info,*sync_action,*sync_detail,*sync_context,*sync_count,*sync_timing,*sync_bar;
 static int lyric_track=-1,lyric_index=-1;
 static bool lyric_follow=true;
 static void go_lyrics(lv_event_t *e){page=-6;render();}
@@ -49,7 +49,7 @@ static void lyric_move(int step){lyric_follow=false;int next=lyric_index+step;if
 static void lyric_prev(lv_event_t *e){lyric_move(-1);}
 static void lyric_next(lv_event_t *e){lyric_move(1);}
 static void sync_now(lv_event_t *e){page=-7;render();}
-static void sync_action_click(lv_event_t *e){if(pearl_sync_busy())pearl_sync_cancel();else pearl_sync_start();}
+static void sync_action_click(lv_event_t *e);
 
 static lv_obj_t *network_info,*network_buttons[3];
 static void wifi_open(lv_event_t *e){page=-5;render();}
@@ -69,6 +69,13 @@ static lv_obj_t *button(lv_obj_t *parent,const char *text,int x,int y,int w,int 
 }
 static void save_place(void){if(page==-1)album_scroll[album_offset/ALBUM_PAGE]=lv_obj_get_scroll_y(body);else if(lib&&page>=0&&(unsigned)page<lib->collection_count){track_scroll[page]=lv_obj_get_scroll_y(body);track_offsets[page]=track_offset;}}
 static void navigate(int target){save_place();page=target;render();}
+static void sync_action_click(lv_event_t *e){
+    (void)e;
+    pearl_sync_view s=pearl_sync_snapshot();
+    if(s.busy)pearl_sync_cancel();
+    else if(s.complete&&lib){view=PEARL_PLAYLISTS;rebuild_browse();navigate(-1);}
+    else pearl_sync_start();
+}
 static void go_albums(lv_event_t *e){navigate(-1);}
 static void go_now(lv_event_t *e){navigate(-3);}
 static void go_back(lv_event_t *e){navigate(page==-6?-3:(page==-7||page==-5||page==-1)?-4:-1);}
@@ -108,7 +115,7 @@ static void art_task(void *arg){
 }
 static bool request_art(const char *path,int slot){art_request r={.generation=art_generation,.slot=slot};snprintf(r.path,sizeof(r.path),"%s",path?path:"");return xQueueSend(art_requests,&r,0)==pdTRUE;}
 static void reset_body(void){
-    art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_obj_clean(body);title=album_label=art=network_info=lyrics_button=sync_info=sync_action=NULL;memset(lyric_lines,0,sizeof(lyric_lines));last_track=last_mark=-2;
+    art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_obj_clean(body);title=album_label=art=network_info=lyrics_button=sync_info=sync_action=sync_detail=sync_context=sync_count=sync_timing=sync_bar=NULL;memset(lyric_lines,0,sizeof(lyric_lines));last_track=last_mark=-2;
     if(art_pixels){lv_img_cache_invalidate_src(&art_desc);free(art_pixels);art_pixels=NULL;}
     for(unsigned i=0;i<ALBUM_PAGE;i++){lv_img_cache_invalidate_src(&thumb_desc[i]);free(thumb_pixels[i]);thumb_pixels[i]=NULL;thumbs[i]=NULL;thumb_requested[i]=false;}
     memset(track_rows,0,sizeof(track_rows));lv_obj_scroll_to_y(body,0,LV_ANIM_OFF);
@@ -131,7 +138,12 @@ static void render(void){
     }else if(page==-7){
         lv_label_set_text(heading,"Sync music");lv_obj_set_pos(heading,96,12);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(hint,"Only changed files are copied.");
-        sync_info=label(body,"",0,8,424,&lv_font_montserrat_20);lv_obj_set_height(sync_info,214);lv_label_set_long_mode(sync_info,LV_LABEL_LONG_WRAP);
+        sync_info=label(body,"",0,4,424,&lv_font_montserrat_28);lv_label_set_long_mode(sync_info,LV_LABEL_LONG_SCROLL_CIRCULAR);lv_obj_set_style_text_color(sync_info,lv_color_hex(yellow),0);
+        sync_detail=label(body,"",0,48,424,&lv_font_montserrat_20);lv_obj_set_height(sync_detail,30);lv_label_set_long_mode(sync_detail,LV_LABEL_LONG_SCROLL_CIRCULAR);
+        sync_context=label(body,"",0,84,424,&lv_font_montserrat_16);lv_obj_set_height(sync_context,44);lv_label_set_long_mode(sync_context,LV_LABEL_LONG_WRAP);lv_obj_set_style_text_color(sync_context,lv_color_hex(teal),0);
+        sync_count=label(body,"",0,138,424,&lv_font_montserrat_20);
+        sync_bar=lv_bar_create(body);lv_obj_set_pos(sync_bar,0,172);lv_obj_set_size(sync_bar,424,10);lv_bar_set_range(sync_bar,0,100);lv_obj_set_style_bg_color(sync_bar,lv_color_mix(lv_color_hex(cream),lv_color_hex(bg),102),LV_PART_MAIN);lv_obj_set_style_bg_opa(sync_bar,LV_OPA_COVER,LV_PART_MAIN);lv_obj_set_style_bg_opa(sync_bar,LV_OPA_COVER,LV_PART_INDICATOR);lv_obj_set_style_bg_color(sync_bar,lv_color_hex(teal),LV_PART_INDICATOR);lv_obj_set_style_radius(sync_bar,5,LV_PART_MAIN);lv_obj_set_style_radius(sync_bar,5,LV_PART_INDICATOR);lv_obj_set_style_border_width(sync_bar,0,LV_PART_MAIN);lv_obj_set_style_shadow_width(sync_bar,0,LV_PART_MAIN);
+        sync_timing=label(body,"",0,198,424,&lv_font_montserrat_20);
         sync_action=button(body,"Start sync",0,236,424,64,sync_action_click,NULL);return;
     }else if(page==-5){
         lv_label_set_text(heading,"WiFi");lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_label_set_text(hint,"Setup is for a grown-up. Music stays offline.");network_info=label(body,"WiFi is off",0,0,424,&lv_font_montserrat_20);lv_obj_set_height(network_info,88);lv_label_set_long_mode(network_info,LV_LABEL_LONG_WRAP);network_buttons[0]=button(body,"Set up WiFi",0,100,424,60,wifi_setup,NULL);network_buttons[1]=button(body,"Connect for diagnostics",0,172,424,60,wifi_connect,NULL);network_buttons[2]=button(body,"Turn WiFi off",0,244,424,60,wifi_off,NULL);return;
@@ -170,7 +182,16 @@ static void render(void){
 static void tick(lv_timer_t *timer){
     if(power_asleep){art_result r;while(xQueueReceive(art_results,&r,0)==pdTRUE)free(r.pixels);return;}
     if(network_info){pearl_network_state n=pearl_network_snapshot();char info[400];if(n.setup)snprintf(info,sizeof(info),"%s\n\nNetwork: %s\nJoin without a password\nOpen http://192.168.4.1\n%s",n.message,n.ap_ssid,n.scanning?"Finding networks...":"");else snprintf(info,sizeof(info),"%s%s%s",n.message,n.connected?"\nIP: ":"",n.connected?n.ip:"");lv_label_set_text(network_info,info);int height=n.setup?220:88;lv_obj_set_height(network_info,height);for(int i=0;i<3;i++)lv_obj_set_y(network_buttons[i],height+12+i*72);}
-    if(sync_info){char message[320];pearl_sync_status(message,sizeof(message));lv_label_set_text(sync_info,message);lv_label_set_text(lv_obj_get_child(sync_action,0),pearl_sync_busy()?"Cancel sync":"Start sync");}
+    if(sync_info){
+        pearl_sync_view s=pearl_sync_snapshot();
+        lv_label_set_text(sync_info,s.title);lv_label_set_text(sync_detail,s.detail);lv_label_set_text(sync_context,s.context);lv_label_set_text(sync_count,s.count);lv_label_set_text(sync_timing,s.timing);
+        lv_obj_set_height(sync_context,s.count[0]?44:102);
+        if(s.determinate)lv_obj_clear_flag(sync_bar,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(sync_bar,LV_OBJ_FLAG_HIDDEN);
+        lv_bar_set_value(sync_bar,s.percent,LV_ANIM_OFF);
+        lv_label_set_text(lv_obj_get_child(sync_action,0),s.busy?"Cancel sync":s.complete?"Open playlists":"Start sync");
+        char ready[64];snprintf(ready,sizeof(ready),"%u playlist%s saved",s.playlists_ready,s.playlists_ready==1?"":"s");
+        lv_label_set_text(hint,s.playlists_ready?ready:"Only changed songs are copied.");
+    }
     if(!lib)return;
     pearl_state s=pearl_audio_state();if(page!=-6&&s.track!=lyric_track&&lyrics.text){pearl_lyrics_free(&lyrics);lyric_track=-1;}char text[160];snprintf(text,sizeof(text),"Vol %d",s.volume);lv_label_set_text(volume_label,text);
     lv_label_set_text(status,s.error[0]?s.error:startup_error);bool error=s.error[0]||startup_error[0];if(error)lv_obj_add_flag(hint,LV_OBJ_FLAG_HIDDEN);else if(page!=-3)lv_obj_clear_flag(hint,LV_OBJ_FLAG_HIDDEN);

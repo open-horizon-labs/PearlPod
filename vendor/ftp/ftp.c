@@ -99,11 +99,18 @@ static uint64_t trace_clock(void) { return esp_timer_get_time(); }
 static atomic_int trace_state,trace_substate;
 static atomic_uint reply_count,last_reply;
 static atomic_uint received_bytes,receive_calls,receive_us,receive_max_us,write_calls,write_us,write_max_us,flush_us,empty_reads;
+static atomic_uint file_received;
+static pearl_ftp_progress_handler progress_handler;
+static unsigned command_used;
+static char command_line[FTP_MAX_PARAM_SIZE + FTP_CMD_SIZE_MAX + 1];
+void pearl_ftp_set_progress_handler(pearl_ftp_progress_handler handler) { progress_handler=handler; }
+unsigned pearl_ftp_file_received(void) { return atomic_load(&file_received); }
 static bool file_failed;
 static void *file_buffer;
 static void trace_max(atomic_uint *value,unsigned n) { if(n>atomic_load(value))atomic_store(value,n); }
 unsigned pearl_ftp_received_bytes(void) { return atomic_load(&received_bytes); }
 void pearl_ftp_reset_progress(void) {
+ file_received=0;
  received_bytes=receive_calls=receive_us=receive_max_us=write_calls=write_us=write_max_us=flush_us=empty_reads=reply_count=last_reply=0;
 }
 void pearl_ftp_trace(char *out,unsigned size) {
@@ -121,7 +128,7 @@ static const ftp_cmd_t ftp_cmd_table[] = { { "FEAT" }, { "SYST" }, { "CDUP" }, {
 										   { "TYPE" }, { "USER" }, { "PASS" }, { "PASV" },
 										   { "LIST" }, { "RETR" }, { "STOR" }, { "DELE" },
 										   { "RMD"	}, { "MKD"	}, { "RNFR" }, { "RNTO" },
-										   { "NOOP" }, { "QUIT" }, { "APPE" }, { "NLST" } };
+										   { "NOOP" }, { "QUIT" }, { "APPE" }, { "NLST" }, { "SITE" } };
 
 // ==== PRIVATE FUNCTIONS ===================================================
 
@@ -142,6 +149,7 @@ static void stoupper (char *str) {
 
 //--------------------------------------------------------------
 static bool ftp_open_file (const char *path, const char *mode) {
+    if(mode[0]!='r')file_received=0;
     discard_file=pearl_trace_ram_sink()&&mode[0]=='w'&&!strcmp(path,"/.pearl/.bench-ram");
     if(discard_file){ftp_data.fp=NULL;async_file=false;file_failed=false;ftp_data.e_open=E_FTP_FILE_OPEN;return true;}
 	ESP_LOGI(FTP_TAG, "ftp_open_file: path=[%s]", path);
@@ -218,7 +226,7 @@ static ftp_result_t ftp_write_file(char *filebuf,uint32_t size){
  bool queued=discard_file||pearl_writer_append(writer,filebuf,size);
  unsigned duration=trace_clock()-before;
  atomic_fetch_add(&write_calls,1);atomic_fetch_add(&write_us,duration);trace_max(&write_max_us,duration);
- if(queued){atomic_fetch_add(&received_bytes,size);return E_FTP_RESULT_OK;}
+ if(queued){atomic_fetch_add(&received_bytes,size);atomic_fetch_add(&file_received,size);return E_FTP_RESULT_OK;}
  return E_FTP_RESULT_FAILED;
 }
 
@@ -335,6 +343,7 @@ static void ftp_close_cmd_data(void) {
 
 //----------------------------
 static void _ftp_reset(void) {
+	command_used=0;
 	// close all connections and start all over again
 	ESP_LOGW(FTP_TAG, "FTP RESET");
 	closesocket(ftp_data.lc_sd);
@@ -724,8 +733,24 @@ static void ftp_process_cmd (void) {
 	memset(bufptr, 0, FTP_MAX_PARAM_SIZE + FTP_CMD_SIZE_MAX);
 	ftp_data.closechild = false;
 
-	// use the reply buffer to receive new commands
-	result = ftp_recv_non_blocking(ftp_data.c_sd, ftp_cmd_buffer, FTP_MAX_PARAM_SIZE + FTP_CMD_SIZE_MAX, &len);
+	/* Read one complete control line, preserving TCP fragmentation and queued
+     * commands. Peek avoids consuming a second line into the reply buffer. */
+    char incoming[FTP_MAX_PARAM_SIZE + FTP_CMD_SIZE_MAX];
+    int peek=recv(ftp_data.c_sd,incoming,sizeof(incoming),MSG_PEEK);
+    if(peek==0||(peek<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)) {command_used=0;ftp_close_cmd_data();return;}
+    if(peek<0) {if(ftp_data.ctimeout>ftp_timeout)ftp_send_reply(221,NULL);return;}
+    char *newline=memchr(incoming,'\n',peek);
+    int wanted=newline?(int)(newline-incoming)+1:peek;
+    if(command_used+(unsigned)wanted>=sizeof(command_line)) {
+        command_used=0;ftp_send_reply(500,"Control line too long");_ftp_reset();return;
+    }
+    result=ftp_recv_non_blocking(ftp_data.c_sd,command_line+command_used,wanted,&len);
+    if(result!=E_FTP_RESULT_OK)return;
+    command_used+=len;
+    if(!command_used||command_line[command_used-1]!='\n')return;
+    command_line[command_used]=0;
+    while(command_used&&(command_line[command_used-1]=='\n'||command_line[command_used-1]=='\r'))command_line[--command_used]=0;
+    memcpy(ftp_cmd_buffer,command_line,command_used+1);len=command_used;command_used=0;
 	if (result == E_FTP_RESULT_OK) {
 		ftp_cmd_buffer[len] = '\0';
 		// bufptr is moved as commands are being popped
@@ -736,6 +761,11 @@ static void ftp_process_cmd (void) {
 		else {
 			ESP_LOGI(FTP_TAG, "CMD: %d", cmd);
 		}
+        if (cmd==E_FTP_CMD_SITE) {
+            bool ok=!strncmp(bufptr,"PEARL ",6)&&progress_handler&&progress_handler(bufptr+6);
+            if(ok)file_received=0;
+            ftp_send_reply(ok?200:502,ok?"Progress updated":"Progress unavailable");return;
+        }
         if (strlen(bufptr)>220 || (strstr(bufptr,"/../")||!strncmp(bufptr,"../",3)||!strcmp(bufptr,"..")) || strchr(bufptr,'\\')) {
             ftp_send_reply(550,"Invalid managed path");return;
         }
@@ -1086,6 +1116,7 @@ void ftp_deinit(void) {
 
 //-------------------
 bool ftp_init(void) {
+	command_used=0;
 	ftp_stop = 0;
 	// Allocate memory for the data buffer, and the file system structures (from the RTOS heap)
 	ftp_deinit();
