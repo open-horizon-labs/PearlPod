@@ -25,7 +25,7 @@ static void defaults(void){
  snprintf(current.farewell.phrase,sizeof(current.farewell.phrase),"Thanks for listening.");
 }
 const pearl_theme *pearl_theme_current(void){if(!current.title[0])defaults();return &current;}
-void pearl_theme_clear(void){free(current.welcome.pixels);free(current.farewell.pixels);memset(&current,0,sizeof(current));farewell_path[0]=0;defaults();}
+void pearl_theme_clear(void){free(current.welcome.pixels);free(current.farewell.pixels);memset(&current,0,sizeof(current));atomic_init(&current.welcome.pixels,NULL);atomic_init(&current.farewell.pixels,NULL);farewell_path[0]=0;defaults();}
 static bool text(toml_datum_t d,char *out,size_t cap){
  if(d.type!=TOML_STRING||d.u.str.len<1||(size_t)d.u.str.len>=cap||strlen(d.u.s)!=(size_t)d.u.str.len)return false;
  for(int i=0;i<d.u.str.len;i++)if((unsigned char)d.u.s[i]<32)return false;

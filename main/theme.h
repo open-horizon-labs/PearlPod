@@ -1,8 +1,9 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #define PEARL_THEME_PIXELS (240*240*2)
-typedef struct {char heading[96], phrase[128];uint8_t *pixels;} pearl_theme_scene;
+typedef struct {char heading[96], phrase[128];_Atomic(uint8_t *) pixels;} pearl_theme_scene;
 typedef struct {
  char name[49],id[49],title[65];
  uint32_t background,surface,text,accent,secondary;
