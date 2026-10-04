@@ -10,5 +10,9 @@ typedef struct {
 } pearl_theme;
 /* Card task only, before publishing to UI. Zero card access during UI startup. */
 void pearl_theme_load(const char *root,uint32_t sequence);
+/* Read after playback is ready; caller owns the result until publication. */
+uint8_t *pearl_theme_read_farewell(void);
+/* Publish under the display lock; an already-rendered fallback stays valid. */
+void pearl_theme_publish_farewell(uint8_t *pixels);
 const pearl_theme *pearl_theme_current(void);
 void pearl_theme_clear(void);

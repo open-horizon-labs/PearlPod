@@ -719,6 +719,12 @@ static void library_task(void *arg)
     pearl_console_start(&music);
     atomic_store(&library_ready,true);
     ESP_LOGW("pearl","Library ready at %lld ms: %u albums, %u tracks; %s",esp_timer_get_time()/1000,music.album_count,music.track_count,err);
+    // Farewell is read only after playback and input are ready. Never hold the
+    // display lock across card I/O; an immediate shutdown uses the neutral icon.
+    uint8_t *farewell=pearl_theme_read_farewell();
+    if(example_lvgl_lock(-1)){pearl_theme_publish_farewell(farewell);example_lvgl_unlock();}
+    else free(farewell);
+    ESP_LOGW("pearl","Farewell cached=%d at %lld ms",pearl_theme_current()->farewell.pixels!=NULL,esp_timer_get_time()/1000);
     vTaskDelete(NULL);
 }
 static void rescan_task(void *arg){
