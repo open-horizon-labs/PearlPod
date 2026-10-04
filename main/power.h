@@ -8,5 +8,7 @@ void pearl_power_activity(void);
 uint32_t pearl_power_last_activity(void);
 bool pearl_power_screen_asleep(void);
 bool pearl_power_deep_supported(void);
+void pearl_power_usb_activity(void);
+bool pearl_power_usb_guard(uint32_t now, bool host_connected);
 void pearl_library_counts(unsigned *albums, unsigned *tracks);
 #endif

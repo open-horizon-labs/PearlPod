@@ -43,11 +43,14 @@ static SemaphoreHandle_t library_access;
 bool pearl_library_lock(void){return library_access&&xSemaphoreTake(library_access,pdMS_TO_TICKS(5000))==pdTRUE;}
 void pearl_library_unlock(void){xSemaphoreGive(library_access);}
 static atomic_bool screen_locked,screen_manual,wake_requested;
-static atomic_uint activity_ms,library_albums,library_tracks;
+static atomic_uint activity_ms,library_albums,library_tracks,usb_host_seen_ms;
+static atomic_bool usb_host_seen;
 void pearl_power_activity(void){atomic_store(&activity_ms,(uint32_t)(esp_timer_get_time()/1000));}
 uint32_t pearl_power_last_activity(void){return atomic_load(&activity_ms);}
 bool pearl_power_screen_asleep(void){return atomic_load(&screen_locked);}
 bool pearl_power_deep_supported(void){return esp_sleep_is_valid_wakeup_gpio(CONFIG_PEARL_BUTTON_UP);}
+void pearl_power_usb_activity(void){atomic_store(&usb_host_seen_ms,(uint32_t)(esp_timer_get_time()/1000));atomic_store(&usb_host_seen,true);}
+bool pearl_power_usb_guard(uint32_t now,bool host_connected){if(host_connected){atomic_store(&usb_host_seen_ms,now);atomic_store(&usb_host_seen,true);}return pearl_usb_host_guard(host_connected,atomic_load(&usb_host_seen),now,atomic_load(&usb_host_seen_ms),CONFIG_PEARL_IDLE_SLEEP_SEC*1000u);}
 void pearl_library_counts(unsigned *albums,unsigned *tracks){*albums=atomic_load(&library_albums);*tracks=atomic_load(&library_tracks);}
 static void display_sleep(bool asleep,bool manual);
 static void enter_standby(void);
@@ -478,12 +481,12 @@ static void example_lvgl_port_task(void *arg)
 }
 
 void pearl_console_start(pearl_library *lib);
-void pearl_trace_audio_restore(void){pearl_audio_attach(&music);}
+void pearl_trace_audio_restore(void){printf("PEARL tracer audio_restored=%d\n",pearl_audio_restore_from_sync());}
 void pearl_sd_bench(void){
     if(atomic_load(&rescan_running)){printf("PEARL tracer_sd refused=library_scan\n");return;}
     char source[PEARL_PATH]={0};
     if(pearl_library_lock()){if(music.track_count)snprintf(source,sizeof(source),"%s",music.tracks[0].path);pearl_library_unlock();}
-    if(!pearl_audio_state().paused||pearl_sync_busy()||pearl_trace_sd_busy()||!pearl_audio_detach())return;
+    if(!pearl_audio_state().paused||pearl_sync_busy()||pearl_trace_sd_busy()||!pearl_audio_release_for_sync())return;
     pearl_trace_sd(source);
     if(!pearl_trace_sd_busy())pearl_trace_audio_restore();
 }
@@ -727,10 +730,11 @@ static void buttons_task(void *arg)
         pearl_state playback=pearl_audio_state();bool playing=playback.ready&&!playback.paused;
         if(playing||was_playing){paused_since=now;}
         was_playing=playing;
-        pearl_power_input policy={.now=now,.last_activity=pearl_power_last_activity(),.paused_since=paused_since,.screen_timeout=CONFIG_PEARL_SCREEN_TIMEOUT_SEC*1000u,.idle_timeout=CONFIG_PEARL_IDLE_SLEEP_SEC*1000u,.playing=playing,.screen_asleep=screen_locked,.network=pearl_network_enabled(),.busy=pearl_sync_busy()||pearl_trace_sd_busy()||atomic_load(&rescan_running)||!atomic_load(&library_ready),.usb_connected=usb_serial_jtag_is_connected(),.button_released=gpio_get_level(up)&&gpio_get_level(down),.deep_supported=pearl_power_deep_supported()};
+        bool usb_power_present=pearl_power_usb_guard(now,usb_serial_jtag_is_connected());
+        pearl_power_input policy={.now=now,.last_activity=pearl_power_last_activity(),.paused_since=paused_since,.screen_timeout=CONFIG_PEARL_SCREEN_TIMEOUT_SEC*1000u,.idle_timeout=CONFIG_PEARL_IDLE_SLEEP_SEC*1000u,.playing=playing,.screen_asleep=screen_locked,.network=pearl_network_enabled(),.busy=pearl_sync_busy()||pearl_trace_sd_busy()||atomic_load(&rescan_running)||!atomic_load(&library_ready),.usb_connected=usb_power_present,.button_released=gpio_get_level(up)&&gpio_get_level(down),.deep_supported=pearl_power_deep_supported()};
         pearl_power_action action=pearl_power_decide(&policy);
         if(action==PEARL_POWER_SCREEN_SLEEP)display_sleep(true,false);
-        if(action==PEARL_POWER_DEEP_SLEEP)enter_standby();
+        if(action==PEARL_POWER_DEEP_SLEEP){ESP_LOGW("pearl","Automatic sleep idle_ms=%lu paused_ms=%lu usb_connected=%d",(unsigned long)(now-policy.last_activity),(unsigned long)(now-policy.paused_since),usb_power_present);enter_standby();}
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }

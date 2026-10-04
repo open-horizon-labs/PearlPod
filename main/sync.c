@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_mac.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
@@ -32,7 +33,7 @@ static atomic_uint loop_us,loop_max_us,loop_calls,yield_us,connect_us,discovery_
 void pearl_sync_trace(char *out,unsigned size) {
  wifi_ap_record_t ap={0};
  int radio=esp_wifi_sta_get_ap_info(&ap);
- char ftp[640];pearl_ftp_trace(ftp,sizeof(ftp));
+ char ftp[768];pearl_ftp_trace(ftp,sizeof(ftp));
  snprintf(out,size,"bssid=%02x:%02x:%02x:%02x:%02x:%02x rssi=%d channel=%u phy_11n=%u radio_result=%d tx_before_qdbm=%d tx_after_qdbm=%d tx_result=%d ps_result=%d connect_us=%u discovery_us=%u trigger_us=%u marker_us=%u network_us=%u loops=%u loop_us=%u loop_max_us=%u yield_us=%u %s",ap.bssid[0],ap.bssid[1],ap.bssid[2],ap.bssid[3],ap.bssid[4],ap.bssid[5],ap.rssi,ap.primary,ap.phy_11n,radio,atomic_load(&tx_before),atomic_load(&tx_after),atomic_load(&tx_result),atomic_load(&ps_result),atomic_load(&connect_us),atomic_load(&discovery_us),atomic_load(&trigger_us),atomic_load(&marker_us),atomic_load(&network_us),atomic_load(&loop_calls),atomic_load(&loop_us),atomic_load(&loop_max_us),atomic_load(&yield_us),ftp);
 }
 static atomic_uint elapsed, quiet, transferred;
@@ -85,16 +86,20 @@ extern void pearl_ftp_close(void);
 
 static __attribute__((noinline)) bool connected(void) {
   int64_t before=esp_timer_get_time();
-  pearl_network_state s = pearl_network_snapshot();
+  bool value = pearl_network_connected();
   atomic_fetch_add(&network_us,(unsigned)(esp_timer_get_time()-before));
-  return s.connected;
+  return value;
 }
 static void task(void *arg) {
   (void)arg;
-  bool ftp = false, dns = false, success = false, card_full = false;
+  bool ftp = false, dns = false, success = false, card_full = false, audio_released=false;
   int failure=6;
   int64_t session_start=esp_timer_get_time();
   stage = 1;
+  unsigned audio_before=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+  if(!pearl_audio_release_for_sync())goto done;
+  audio_released=true;
+  ESP_LOGW("sync","Playback released internal_before=%u internal_after=%u",audio_before,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
   pearl_network_connect();
 
   int64_t start = esp_timer_get_time();
@@ -267,7 +272,7 @@ static void task(void *arg) {
       if (read && pearl_audio_state().paused && pearl_managed_activate(sha)) {
         success = true;
         pearl_managed_collect();
-        pearl_library_rescan();
+        /* Rescan after the audio worker has been restored. */
       }
       ESP_LOGW("sync","Activation complete success=%d stack_remaining=%u",success,(unsigned)uxTaskGetStackHighWaterMark(NULL));
       break;
@@ -289,7 +294,13 @@ done:
   if (dns)
     mdns_free();
 
-  pearl_network_off();
+  pearl_network_shutdown();
+  if(audio_released){
+    bool restored=pearl_audio_restore_from_sync();
+    ESP_LOGW("sync","Playback restored=%d internal_free=%u",restored,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
+    if(!restored){success=false;failure=6;}
+    else if(success)pearl_library_rescan();
+  }
   stage = success ? 5 : cancel ? 13 : card_full ? 8 : failure;
   pearl_trace_probe(false);probe_url[0]=0;
   busy = false;

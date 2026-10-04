@@ -24,6 +24,7 @@ static inline void pearl_network_off(void) {}
 #else
 void pearl_network_init(void);
 bool pearl_network_enabled(void);
+bool pearl_network_connected(void);
 pearl_network_state pearl_network_snapshot(void);
 void pearl_network_setup(void);
 void pearl_network_connect(void);

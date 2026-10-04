@@ -7,6 +7,7 @@
 #include "driver/i2c.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_attr.h"
 #include "nvs.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,7 +32,7 @@ static SemaphoreHandle_t state_lock;
 static pearl_state state={.track=-1,.volume=20,.paused=true};
 static i2s_chan_handle_t tx;
 static int cs_addr=-1;
-static atomic_bool stopping,detached;
+static atomic_bool stopping,detached,worker_running,preferences_running;
 static bool detach_signaled;
 static SemaphoreHandle_t reload_done;
 static pearl_library *pending_library;
@@ -87,9 +88,14 @@ static esp_err_t dac_init(void){
 }
 static void save(void){if(!prefs_open)return;xSemaphoreTake(prefs_lock,portMAX_DELAY);if(detached||!library){xSemaphoreGive(prefs_lock);return;}pearl_state s=pearl_audio_state();nvs_set_i32(prefs,"volume",s.volume);if(s.track>=0&&(unsigned)s.track<library->track_count)nvs_set_str(prefs,"track",library->tracks[s.track].path);nvs_commit(prefs);xSemaphoreGive(prefs_lock);}
 static void preference_task(void *arg){
-    pearl_state last={.track=-99,.volume=-99};
-    while(!stopping){vTaskDelay(pdMS_TO_TICKS(3000));pearl_state s=pearl_audio_state();if(s.track!=last.track||s.volume!=last.volume){save();last=s;}}
-    vTaskDelete(NULL);
+    pearl_state last={.track=-99,.volume=-99};unsigned ticks=0;
+    while(!stopping){
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if(++ticks<30)continue;
+        ticks=0;pearl_state s=pearl_audio_state();
+        if(s.track!=last.track||s.volume!=last.volume){save();last=s;}
+    }
+    preferences_running=false;vTaskDelete(NULL);
 }
 static void command_apply(command c){
     pearl_state s=pearl_audio_state();
@@ -105,9 +111,11 @@ static void command_apply(command c){
     publish(s);
 }
 static bool service(int current){command c;while(xQueueReceive(commands,&c,0)==pdTRUE)command_apply(c);pearl_state s=pearl_audio_state();return !stopping && !detached && s.track==current && decode_epoch==playback_epoch;}
-static int32_t output[4096];
-static int16_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
-static uint8_t input[16384];
+/* CPU sample buffers are not I2S DMA buffers: i2s_channel_write copies them.
+ * Keep scarce internal RAM available for WiFi and direct SD DMA batches. */
+static EXT_RAM_BSS_ATTR int32_t output[4096];
+static EXT_RAM_BSS_ATTR int16_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
+static EXT_RAM_BSS_ATTR uint8_t input[16384];
 static double phase;
 static int16_t previous[2];
 static bool have_previous;
@@ -172,7 +180,8 @@ static bool decode(const char *path,int current){
 }
 static void task(void *arg){
     if(nvs_open("pearl",NVS_READWRITE,&prefs)==ESP_OK){prefs_open=true;int32_t v;pearl_state s=pearl_audio_state();if(nvs_get_i32(prefs,"volume",&v)==ESP_OK)s.volume=pearl_volume(v,0,CONFIG_PEARL_MAX_VOLUME);char p[PEARL_PATH];size_t n=sizeof(p);if(nvs_get_str(prefs,"track",p,&n)==ESP_OK)for(unsigned i=0;i<library->track_count;i++)if(!strcmp(p,library->tracks[i].path)){s.track=i;break;}publish(s);}
-    xTaskCreate(preference_task,"preferences",3072,NULL,1,NULL);
+    preferences_running=true;
+    if(xTaskCreate(preference_task,"preferences",3072,NULL,1,NULL)!=pdPASS)preferences_running=false;
     esp_err_t e=dac_init();if(e){error("Audio hardware not ready. Check the board variant.");goto stopped;}
     i2s_chan_config_t cfg=I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0,I2S_ROLE_MASTER);cfg.dma_desc_num=8;cfg.dma_frame_num=511;cfg.auto_clear=true;
     e=i2s_new_channel(&cfg,&tx,NULL);if(e){error("Can't initialize audio output");goto stopped;}
@@ -190,13 +199,48 @@ static void task(void *arg){
             now.seconds=0;now.milliseconds=0;if(active_collection>=0){const pearl_collection *collection=&library->collections[active_collection];if((unsigned)(collection_position+1)>=collection->count)now.paused=true;else{collection_position++;now.track=collection->tracks[collection_position];playback_epoch++;}}else if(next==(int)a->first){now.paused=true;}else{now.track=next;playback_epoch++;}publish(now);save();}
     }
 stopped:
-    if(tx)i2s_channel_disable(tx);
+    stopping=true;
+    if(tx){i2s_channel_disable(tx);i2s_del_channel(tx);tx=NULL;}
     if(cs_addr>=0){cs_write(0x90003,0xef);vTaskDelay(pdMS_TO_TICKS(20));cs_write(0x20000,0xfe);gpio_set_level(41,0);}else if(CONFIG_PEARL_BUTTON_DOWN!=48)gpio_set_level(48,0);
     if(!detached){save();}
-    pearl_state s=pearl_audio_state();s.ready=false;s.paused=true;publish(s);vTaskDelete(NULL);
+    while(atomic_load(&preferences_running))vTaskDelay(pdMS_TO_TICKS(10));
+    if(prefs_open){nvs_close(prefs);prefs_open=false;}
+    pearl_state s=pearl_audio_state();s.ready=false;s.paused=true;publish(s);
+    worker_running=false;vTaskDelete(NULL);
 }
-void pearl_audio_start(pearl_library *l){library=l;state_lock=xSemaphoreCreateMutex();prefs_lock=xSemaphoreCreateMutex();reload_done=xSemaphoreCreateBinary();commands=xQueueCreate(16,sizeof(command));if(!state_lock||!prefs_lock||!reload_done||!commands){error("Not enough memory for playback");return;}xTaskCreatePinnedToCore(task,"audio",32768,NULL,5,NULL,1);}
-void pearl_audio_shutdown(void){send(STOP,0);for(int i=0;i<150&&pearl_audio_state().ready;i++)vTaskDelay(pdMS_TO_TICKS(10));}
+void pearl_audio_start(pearl_library *l){
+    if(atomic_load(&worker_running))return;
+    library=l;
+    if(!state_lock)state_lock=xSemaphoreCreateMutex();
+    if(!prefs_lock)prefs_lock=xSemaphoreCreateMutex();
+    if(!reload_done)reload_done=xSemaphoreCreateBinary();
+    if(!commands)commands=xQueueCreate(16,sizeof(command));
+    if(!state_lock||!prefs_lock||!reload_done||!commands){error("Not enough memory for playback");return;}
+    xQueueReset(commands);stopping=detached=false;detach_signaled=false;active_collection=-1;
+    pearl_state s=pearl_audio_state();s.ready=false;s.paused=true;s.track=-1;s.seconds=s.milliseconds=0;s.error[0]=0;publish(s);
+    worker_running=true;
+    if(xTaskCreatePinnedToCore(task,"audio",32768,NULL,5,NULL,1)!=pdPASS){worker_running=false;error("Not enough memory for playback task");}
+}
+void pearl_audio_shutdown(void){
+    if(!atomic_load(&worker_running))return;
+    command c={.kind=STOP};
+    if(xQueueSendToFront(commands,&c,pdMS_TO_TICKS(100))!=pdTRUE){ESP_LOGW("player","Could not stop playback: command queue full");return;}
+    for(unsigned i=0;i<500&&atomic_load(&worker_running);i++)vTaskDelay(pdMS_TO_TICKS(10));
+}
+bool pearl_audio_release_for_sync(void){
+    if(!pearl_audio_state().paused)return false;
+    pearl_audio_shutdown();
+    if(atomic_load(&worker_running)||atomic_load(&preferences_running))return false;
+    /* Deleted-task stacks are reclaimed by the idle tasks. */
+    vTaskDelay(pdMS_TO_TICKS(20));
+    return true;
+}
+bool pearl_audio_restore_from_sync(void){
+    pearl_audio_start(library);
+    for(unsigned i=0;i<400&&atomic_load(&worker_running)&&!pearl_audio_state().ready;i++)vTaskDelay(pdMS_TO_TICKS(10));
+    return pearl_audio_state().ready;
+}
 
-bool pearl_audio_detach(void){if(!pearl_audio_state().ready)return false;while(xSemaphoreTake(reload_done,0)==pdTRUE){}send(DETACH,0);if(xSemaphoreTake(reload_done,pdMS_TO_TICKS(5000))!=pdTRUE){pending_library=library;send(ATTACH,0);return false;}xSemaphoreTake(prefs_lock,portMAX_DELAY);return true;}
+static bool detach_command(void){if(!pearl_audio_state().ready)return false;while(xSemaphoreTake(reload_done,0)==pdTRUE){}send(DETACH,0);if(xSemaphoreTake(reload_done,pdMS_TO_TICKS(5000))!=pdTRUE){pending_library=library;send(ATTACH,0);return false;}return true;}
+bool pearl_audio_detach(void){if(!detach_command())return false;xSemaphoreTake(prefs_lock,portMAX_DELAY);return true;}
 void pearl_audio_attach(pearl_library *l){pending_library=l;xSemaphoreGive(prefs_lock);send(ATTACH,0);}

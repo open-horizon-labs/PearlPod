@@ -77,6 +77,8 @@ class Capture:
         with self.ready:
             while time.monotonic() < deadline:
                 for line in self.lines[position:]:
+                    if any(fatal in line for fatal in ('assert failed:', 'Guru Meditation Error:', 'Rebooting...')):
+                        raise RuntimeError('Player reset during diagnostic: '+line)
                     if text in line:
                         return line
                 self.ready.wait(min(0.5, max(0, deadline-time.monotonic())))
@@ -85,6 +87,20 @@ class Capture:
     def sample(self):
         self.command('trace status')
         self.command('sync trace')
+
+    def wait_restored(self, timeout=15):
+        deadline = time.monotonic()+timeout
+        while time.monotonic() < deadline:
+            wifi = self.wait('PEARL wifi', self.command('wifi status'))
+            trace = self.wait('PEARL tracer {', self.command('trace status'))
+            state = json.loads(trace.split('PEARL tracer ', 1)[1])
+            status = self.wait('PEARL status', self.command('status'))
+            if 'enabled=0' in wifi and not state['probe'] and not state['sd_busy']:
+                if 'ready=1' in status and 'paused=1' in status and status.endswith('error='):
+                    self.command('memory')
+                    return
+            time.sleep(0.2)
+        raise TimeoutError('Playback/radio resources did not recover after diagnostic')
 
     def close(self):
         self.stop.set()
@@ -170,6 +186,7 @@ def main():
                     capture.sample()
             else:
                 raise TimeoutError('SD sweep timed out')
+            capture.wait_restored()
             capture.sample()
             capture.wait('tracer_events_end', capture.command('trace events 128'))
             capture.command('trace stop')
@@ -250,15 +267,8 @@ def main():
                 capture.sample()
                 capture.wait('tracer_events_end', capture.command('trace events 128'))
                 capture.command('trace cancel')
-                # Bounded wait for FTP/network teardown, observing the device.
-                deadline = time.monotonic()+15
-                while time.monotonic() < deadline:
-                    line = capture.wait('PEARL wifi', capture.command('wifi status'))
-                    if 'enabled=0' in line:
-                        break
-                    time.sleep(0.5)
-                else:
-                    raise TimeoutError('Diagnostic network did not turn off')
+                # Radio-off can precede audio reconstruction; observe both.
+                capture.wait_restored()
                 capture.command('trace stop')
         print(f'Trace saved to {args.output}', flush=True)
     finally:

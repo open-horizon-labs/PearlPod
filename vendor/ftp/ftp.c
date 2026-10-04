@@ -86,7 +86,7 @@ static ftp_data_t ftp_data = {0};
 static pearl_writer *writer;
 static bool discard_file;
 static bool async_file;
-static char last_writer_trace[256];
+static char last_writer_trace[320];
 #ifdef PEARL_FTP_HOST
 #include <time.h>
 extern bool pearl_trace_ram_sink(void);
@@ -155,8 +155,9 @@ static bool ftp_open_file (const char *path, const char *mode) {
 		ESP_LOGE(FTP_TAG, "ftp_open_file: open fail [%s]", fullname);
 		return false;
 	}
-    /* Explicit PSRAM buffering batches small TCP reads into large FAT writes. */
-    if(setvbuf(ftp_data.fp,file_buffer,_IOFBF,32768)!=0) {
+    /* Reads use PSRAM stdio buffering. The SD worker writes directly from
+     * its aligned internal buffer; no stdio layer should split DMA batches. */
+    if(setvbuf(ftp_data.fp,mode[0]=='r'?file_buffer:NULL,mode[0]=='r'?_IOFBF:_IONBF,mode[0]=='r'?32768:0)!=0) {
         fclose(ftp_data.fp);ftp_data.fp=NULL;return false;
     }
     file_failed=false;async_file=mode[0]!='r';

@@ -29,6 +29,8 @@ bool pearl_library_lock(void);
 void pearl_library_unlock(void);
 void pearl_ui_scanning(void);
 bool pearl_audio_detach(void);
+bool pearl_audio_release_for_sync(void);
+bool pearl_audio_restore_from_sync(void);
 void pearl_audio_attach(pearl_library *lib);
 void pearl_audio_toggle(void);
 void pearl_audio_step(int delta);

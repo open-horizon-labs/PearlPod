@@ -87,6 +87,9 @@ static bool flag(unsigned which) {
   xSemaphoreGive(lock);
   return value;
 }
+bool pearl_network_connected(void) {
+  return lock && flag(1);
+}
 bool pearl_network_enabled(void) {
   if (!lock)
     return false;

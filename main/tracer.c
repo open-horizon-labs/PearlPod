@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
 #define EVENTS 2048u
 #define SAMPLE (1024u*1024u)
 #define VOLUME (16u*1024u*1024u)
@@ -148,7 +149,16 @@ static void sd_task(void *arg){
     int64_t before_write=esp_timer_get_time();
     if(dma){memcpy(dma,data,n);data=dma;copy_us+=esp_timer_get_time()-before_write;}
     before_write=esp_timer_get_time();
-    size_t written=fwrite(data,1,n,out);
+    size_t written=0;
+    if(mode==0)written=fwrite(data,1,n,out);
+    else{
+     while(written<n){
+      ssize_t amount=write(fd,data+written,n-written);
+      if(amount<0&&errno==EINTR)continue;
+      if(amount<=0)break;
+      written+=(size_t)amount;
+     }
+    }
     unsigned duration=esp_timer_get_time()-before_write;
     if(duration>longest)longest=duration;
     total+=written;ok=written==n;

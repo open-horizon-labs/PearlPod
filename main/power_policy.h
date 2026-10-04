@@ -12,4 +12,6 @@ typedef struct {
       deep_supported;
 } pearl_power_input;
 pearl_power_action pearl_power_decide(const pearl_power_input *in);
+bool pearl_usb_host_guard(bool connected, bool seen, uint32_t now,
+                          uint32_t last_seen, uint32_t grace_ms);
 unsigned pearl_wifi_retry_delay(unsigned attempt);

@@ -5,6 +5,7 @@
 #include "tracer.h"
 #include "power.h"
 #include "esp_timer.h"
+#include "esp_attr.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -27,7 +28,7 @@ static void run(const char *line){
  else if(!strcmp(line,"next"))pearl_audio_step(1);
  else if(!strcmp(line,"prev"))pearl_audio_step(-1);
  else if(!strncmp(line,"volume ",7)){pearl_state s=pearl_audio_state();pearl_audio_volume(atoi(line+7)-s.volume);}
- else if(!strcmp(line,"power"))printf("PEARL power screen_asleep=%d deep_supported=%d usb_connected=%d idle_ms=%lu\n",pearl_power_screen_asleep(),pearl_power_deep_supported(),usb_serial_jtag_is_connected(),(unsigned long)((uint32_t)(esp_timer_get_time()/1000)-pearl_power_last_activity()));
+ else if(!strcmp(line,"power")){uint32_t now=(uint32_t)(esp_timer_get_time()/1000);bool host=usb_serial_jtag_is_connected();printf("PEARL power screen_asleep=%d deep_supported=%d usb_connected=%d usb_host_live=%d idle_ms=%lu\n",pearl_power_screen_asleep(),pearl_power_deep_supported(),pearl_power_usb_guard(now,host),host,(unsigned long)(now-pearl_power_last_activity()));}
  else if(!strcmp(line,"memory"))printf("PEARL memory internal=%u minimum=%u largest=%u psram=%u\n",(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
  else if(!strcmp(line,"sd bench")||!strcmp(line,"trace sd"))pearl_sd_bench();
  else if(!strcmp(line,"trace start"))printf("PEARL tracer start_ok=%d\n",pearl_trace_start());
@@ -40,7 +41,7 @@ static void run(const char *line){
  else if(!strcmp(line,"sync cancel"))pearl_sync_cancel();
  else if(!strcmp(line,"sync"))pearl_sync_start();
  else if(!strncmp(line,"sync source ",12))printf("PEARL sync source saved=%d\n",pearl_sync_source(line+12));
- else if(!strcmp(line,"sync trace")){static char trace[1024];pearl_sync_trace(trace,sizeof(trace));printf("PEARL sync trace %s\n",trace);}
+ else if(!strcmp(line,"sync trace")){static EXT_RAM_BSS_ATTR char trace[1536];pearl_sync_trace(trace,sizeof(trace));printf("PEARL sync trace %s\n",trace);}
  else if(!strcmp(line,"sync status")){char msg[120];pearl_sync_status(msg,sizeof(msg));printf("PEARL sync %s\n",msg);}
  else if(!strcmp(line,"wifi portal"))printf("PEARL captive active=%d dns_replies=%u\n",pearl_captive_dns_active(),pearl_captive_dns_replies());
  else if(!strcmp(line,"wifi setup"))pearl_network_setup();
@@ -52,5 +53,5 @@ static void run(const char *line){
  else printf("PEARL commands: status, list, groups, play N, playgroup N P, rescan, pause, next, prev, volume N, buttons, memory, power, wifi setup/scan/connect/off/status, sync, sync status, sync source URL, trace start/status/stop/events/sd/net URL/cancel\n");
  fflush(stdout);
 }
-static void task(void *arg){char line[256];unsigned n=0;while(1){int c=getchar();if(c==EOF){clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(20));continue;}if(c=='\r'||c=='\n'){if(n){line[n]=0;run(line);n=0;}}else if(n<sizeof(line)-1)line[n++]=c;}}
+static void task(void *arg){char line[256];unsigned n=0;while(1){int c=getchar();if(c==EOF){clearerr(stdin);vTaskDelay(pdMS_TO_TICKS(20));continue;}pearl_power_usb_activity();if(c=='\r'||c=='\n'){if(n){line[n]=0;run(line);n=0;}}else if(n<sizeof(line)-1)line[n++]=c;}}
 void pearl_console_start(pearl_library *l){lib=l;gpio_set_direction(47,GPIO_MODE_INPUT);gpio_pullup_en(47);xTaskCreate(task,"console",6144,NULL,1,NULL);}
