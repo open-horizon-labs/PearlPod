@@ -167,7 +167,7 @@ static void choose_library(char *url,unsigned size,const char *saved,bool dns) {
 }
 static void task(void *arg) {
   (void)arg;
-  bool ftp = false, dns = false, success = false, card_full = false, audio_released=false;
+  bool ftp = false, dns = false, success = false, card_full = false, audio_released=false, refresh_library=true;
   int failure=6;
   int64_t session_start=esp_timer_get_time();
   stage = 1;
@@ -334,9 +334,15 @@ static void task(void *arg) {
       stage = 4;
       pearl_network_off(); /* Upload is complete; release radio RAM before parsing. */
 
+      taskENTER_CRITICAL(&progress_lock);
+      bool no_delta=content_progress.known && content_progress.info.total_bytes==0;
+      taskEXIT_CRITICAL(&progress_lock);
+      bool unchanged=read && no_delta && pearl_managed_is_active(sha);
       if (read && pearl_audio_state().paused && pearl_managed_activate(sha)) {
         success = true;
-        pearl_managed_collect();
+        refresh_library=!unchanged;
+        if(refresh_library) pearl_managed_collect();
+        else ESP_LOGW("sync","Unchanged catalog; keeping current library");
         /* Rescan after the audio worker has been restored. */
       }
       ESP_LOGW("sync","Activation complete success=%d stack_remaining=%u",success,(unsigned)uxTaskGetStackHighWaterMark(NULL));
@@ -364,7 +370,7 @@ done:
     bool restored=pearl_audio_restore_from_sync();
     ESP_LOGW("sync","Playback restored=%d internal_free=%u",restored,(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
     if(!restored){success=false;failure=6;}
-    else if(success||(!probe_url[0]&&atomic_load(&transferred)))pearl_library_rescan();
+    else if(refresh_library&&(success||(!probe_url[0]&&atomic_load(&transferred))))pearl_library_rescan();
   }
   stage = success ? 5 : cancel ? 13 : card_full ? 8 : failure;
   pearl_trace_probe(false);probe_url[0]=0;
