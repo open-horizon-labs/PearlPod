@@ -29,7 +29,7 @@ def snapshot(server, source_root, local_root):
             tracks[key] = {
                 'id': key, 'source': str(path), 'title': item.title,
                 'artist': item.grandparentTitle, 'album': item.parentTitle,
-                'album_id': str(item.parentRatingKey), 'track': item.index,
+                'album_id': str(item.parentRatingKey), 'album_thumb': getattr(item,'parentThumb',None), 'track': item.index,
                 'disc': item.parentIndex, 'duration_ms': item.duration,
                 'genres': [g.tag for g in getattr(item, 'genres', [])],
                 'bytes': path.stat().st_size,

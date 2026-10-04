@@ -23,7 +23,7 @@ def status():
     with urllib.request.urlopen(base+'/status',timeout=5) as response:
         return json.load(response)
 
-def wait_for(predicate,seconds=60):
+def wait_for(predicate,seconds=180):
     end=time.monotonic()+seconds
     while time.monotonic()<end:
         result=predicate()
@@ -37,34 +37,35 @@ def trigger(body):
         with urllib.request.urlopen(request,timeout=5) as response:return response.status
     except urllib.error.HTTPError as error:return error.code
 
-wait_for(lambda:status().get('publisher')=='ready')
+wait_for(lambda:status().get('publisher')=='ready',seconds=660)
 assert trigger([])==400
 assert trigger({'ftp_port':True})==400
 assert trigger({'ftp_port':2121,'free_bytes':True})==400
 with tempfile.TemporaryDirectory(prefix='pearl-real-sync-') as directory:
     root=Path(directory)
+    (root/'.pearl').mkdir()
     (root/'manual-note').write_text('Keep existing files')
     receiver=subprocess.Popen(['/tmp/pearl-ftp-host',str(root)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:
         time.sleep(.2)
         assert trigger({'ftp_port':2121,'free_bytes':0})==202
-        wait_for(lambda:(root/'error.txt').is_file())
-        assert (root/'error.txt').read_text()=='card_full\n'
-        assert not (root/'ready').exists()
-        assert not list((root/'objects').glob('*.mp3'))
+        wait_for(lambda:(root/'.pearl/error.txt').is_file())
+        assert (root/'.pearl/error.txt').read_text()=='card_full\n'
+        assert not (root/'.pearl/ready').exists()
+        assert not list(root.rglob('*.mp3'))
         time.sleep(.2)
-        (root/'error.txt').unlink()
+        (root/'.pearl/error.txt').unlink()
         assert trigger({'ftp_port':2121,'free_bytes':1024*1024*1024})==202
         wait_for(lambda:status().get('status')=='uploaded')
-        sha=(root/'ready').read_text().strip()
-        catalog=root/'catalogs'/sha
+        sha=(root/'.pearl/ready').read_text().strip()
+        catalog=root/'.pearl/catalogs'/sha
         records=[json.loads(line) for line in catalog.read_text().splitlines()]
         tracks=[record['track'] for record in records if 'track' in record]
         assert tracks, 'Select a real PP: playlist first'
-        before={name:(root/'objects'/name).stat().st_mtime_ns for name in tracks}
+        before={name:(root/name).stat().st_mtime_ns for name in tracks}
         assert trigger({'ftp_port':2121,'free_bytes':1024*1024*1024})==202
         wait_for(lambda:status().get('status')=='uploaded')
-        assert before=={name:(root/'objects'/name).stat().st_mtime_ns for name in tracks}
+        assert before=={name:(root/name).stat().st_mtime_ns for name in tracks}
         assert (root/'manual-note').read_text()=='Keep existing files'
         print(f'Real NAS HTTP -> native FTP: {len(tracks)} tracks; card-full fails before upload; no-op leaves audio untouched')
     finally:

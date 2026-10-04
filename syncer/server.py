@@ -7,8 +7,7 @@ import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from plexapi.server import PlexServer
-from publisher import publish
+from orchestrator import Publications
 from transfer import deliver, CapacityError, report_failure
 from zeroconf import Zeroconf, ServiceInfo
 
@@ -22,31 +21,28 @@ def main():
     p.add_argument('--cache',type=Path,required=True)
     p.add_argument('--port',type=int,default=8787)
     p.add_argument('--advertise-ip',required=True)
+    p.add_argument('--poll-interval',type=float,default=60)
+    p.add_argument('--poll-timeout',type=float,default=600)
+    p.add_argument('--refresh-timeout',type=float,default=120)
+    p.add_argument('--cache-limit',type=int,default=20*1024**3)
     a=p.parse_args()
-    server=PlexServer(a.plex_url,token=a.plex_token.read_text().strip(),timeout=15)
-    gate=threading.Lock(); state={'status':'idle','publisher':'preparing'}
-    def refresh():
-        while True:
-            state['publisher']='preparing'
-            try:
-                before=time.monotonic()
-                head=publish(server,a.source_root,a.music,a.cache)
-                state['publication_ms']=round((time.monotonic()-before)*1000,2)
-                state.update(publisher='ready',source_checked_at=int(time.time()),published_catalog=head['catalog'])
-            except Exception as e:
-                state.update(publisher='error',publication_error=type(e).__name__)
-            time.sleep(60)
-    threading.Thread(target=refresh,daemon=True).start()
+    if a.poll_interval <= 0 or a.poll_timeout <= 0 or not 0 < a.refresh_timeout <= 120 or a.cache_limit <= 0:
+        p.error('Invalid scheduler/cache bounds')
+    publications=Publications(a)
+    gate=threading.Lock(); state={'status':'idle'}
+    threading.Thread(target=publications.poll,daemon=True).start()
     def sync(address,port,free_bytes):
         try:
-            head=json.loads((a.cache/'head.json').read_text())
-            state['status']='transferring'
-            state['transfer_trace']={}
-            sha=deliver(a.cache,head,address,port,free_bytes=free_bytes,trace=lambda metrics:state.update(transfer_trace=metrics))
-            state.update(status='uploaded',catalog=sha)
+            state['status']='preparing'
+            def upload(head):
+                state['status']='transferring'
+                state['transfer_trace']={}
+                sha=deliver(a.cache,head,address,port,free_bytes=free_bytes,trace=lambda metrics:state.update(transfer_trace=metrics))
+                state.update(status='uploaded',catalog=sha)
+            publications.refresh(a.refresh_timeout, consume=upload)
         except Exception as e:
             state.update(status='error',error=type(e).__name__)
-            try:report_failure(address,port,'card_full' if isinstance(e,CapacityError) else 'transfer_failed',normal=head.get('format')==2)
+            try:report_failure(address,port,'card_full' if isinstance(e,CapacityError) else 'transfer_failed',normal=True)
             except Exception:pass
         finally:gate.release()
     class Handler(BaseHTTPRequestHandler):
@@ -56,8 +52,9 @@ def main():
             self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)))
             self.end_headers();self.wfile.write(data)
         def do_GET(self):
+            if self.path=='/health':self.reply(200,{'status':'alive'});return
             if self.path!='/status':self.reply(404,{'error':'not found'});return
-            self.reply(200,dict(state))
+            self.reply(200,{**dict(state),**publications.status()})
         def do_POST(self):
             if self.path!='/sync':self.reply(404,{'error':'not found'});return
             try:
@@ -74,7 +71,8 @@ def main():
                 free_bytes=data.get('free_bytes')
                 if free_bytes is not None and (type(free_bytes) is not int or free_bytes<0):raise ValueError()
             except (ValueError,OSError):self.reply(400,{'error':'invalid sync trigger'});return
-            if not (a.cache/'head.json').is_file() or state.get('publisher')=='error':self.reply(503,{'error':'library not ready; retry after preparation'});return
+            if not (a.cache/'head.json').is_file():
+                self.reply(503,{'error':'library preparing; retry after first export'});return
             if not gate.acquire(blocking=False):self.reply(409,{'error':'sync busy'});return
             state.pop('error',None);state.update(status='queued')
             threading.Thread(target=sync,args=(address,port,free_bytes),daemon=True).start()
@@ -85,7 +83,7 @@ def main():
         addresses=[socket.inet_aton(a.advertise_ip)],port=a.port,properties={'version':'1','transport':'ftp'},server='pearlpod-syncer.local.')
     z.register_service(info)
     try:http.serve_forever()
-    finally:z.unregister_service(info);z.close();http.server_close()
+    finally:publications.stop.set();z.unregister_service(info);z.close();http.server_close()
 
 
 if __name__=='__main__':

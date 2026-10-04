@@ -8,3 +8,5 @@ cc -DPEARL_FTP_HOST -Wall -Wextra -Werror -fsanitize=address,undefined -I vendor
 /tmp/pearl-async-writer-tests
 /tmp/pearl-lyrics-tests
 .sync-venv/bin/python tests/test_syncer.py
+.sync-venv/bin/python tests/test_exporter_automation.py
+.sync-venv/bin/python tests/test_syncer_deploy.py

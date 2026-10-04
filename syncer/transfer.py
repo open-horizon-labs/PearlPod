@@ -46,6 +46,31 @@ def inventory(address, port, normal=False):
     return found
 
 
+def receipt(address, port):
+    """Small host-written delivery identity, independent of cleared ready markers."""
+    data = bytearray()
+    def collect(block):
+        data.extend(block)
+        if len(data) > 1024*1024:
+            raise ValueError('Delivery receipt too large')
+    with ftplib.FTP() as ftp:
+        ftp.connect(str(address), port, timeout=15)
+        ftp.login()
+        try:
+            ftp.retrbinary('RETR /.pearl/delivered.json', collect)
+        except ftplib.error_perm as error:
+            if not str(error).startswith('550'):
+                raise
+            return {}
+    try:
+        result = json.loads(data)
+        if not isinstance(result, dict):
+            raise ValueError()
+        return result
+    except (ValueError, TypeError):
+        return {}  # Unknown identity requires replacement, never a guessed reuse.
+
+
 class CapacityError(OSError):
     pass
 
@@ -83,13 +108,20 @@ def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=
     normal=head.get('format')==2
     metadata='/.pearl' if normal else ''
     catalog=cache/'catalogs'/sha
+    rows=[json.loads(line) for line in catalog.read_text().splitlines()]
+    identities={row['file']:row.get('cache_source',row['file']) for row in rows if 'file' in row}
+    before=time.monotonic()
+    existing=inventory(ip,port,normal) if normal else {}
+    original_sizes=dict(existing)
+    previous=receipt(ip,port) if normal else identities
+    changed={name for name,source in identities.items() if previous.get(name)!=source}
     if free_bytes is not None:
         required={}
         for line in catalog.read_text().splitlines():
             record=json.loads(line)
             if 'file' in record:required[record['file']]=record['bytes']
-        before=time.monotonic()
-        existing=inventory(ip,port,normal)
+        if not normal:existing=inventory(ip,port,normal)
+        for name in changed:existing.pop(name,None)
         metrics.update(object_count=len(required),object_bytes=sum(required.values()),missing_objects=sum(existing.get(n)!=b for n,b in required.items()),missing_bytes=sum(b for n,b in required.items() if existing.get(n)!=b))
         mark("inventory_ms",before)
         capacity(required,existing,free_bytes,catalog.stat().st_size)
@@ -108,6 +140,12 @@ def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=
             if not re.fullmatch(r'[a-f0-9]{64}\.(mp3|jpg|lrc|srt|vtt|txt|m3u8)',source):raise ValueError('Unsafe cache source')
             target=staged/name;target.parent.mkdir(parents=True,exist_ok=True)
             os.link(cache/'objects'/source,target)
+        delivered=Path(directory)/'delivered.json';delivered.write_text(json.dumps(identities))
+        forced=[]
+        for name in sorted(changed):
+            if original_sizes.get(name) != (staged/name).stat().st_size:continue
+            forced.append('put '+quote(staged/name)+' -o '+quote('/'+name))
+            # The size-only mirror skips these; replace them explicitly.
         marker=Path(directory)/'ready';marker.write_text(sha+'\n')
         script='\n'.join([
             'set cmd:fail-exit yes', 'set cmd:move-background no',
@@ -118,6 +156,8 @@ def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=
             f'open -u anonymous,pearlpod ftp://{ip}:{port}',
             'set cmd:fail-exit no', 'mkdir -p '+('.pearl/catalogs' if normal else 'objects catalogs'), 'set cmd:fail-exit yes',
             'mirror --reverse --ignore-time --no-perms --parallel=1 '+quote(staged)+(' /' if normal else ' /objects'),
+            *forced,
+            *(['put '+quote(delivered)+' -o /.pearl/delivered.tmp', 'mv /.pearl/delivered.tmp /.pearl/delivered.json'] if normal else []),
             'put '+quote(catalog)+' -o '+metadata+'/catalogs/'+sha,
             'put '+quote(marker)+' -o '+metadata+'/ready.tmp',
             'mv '+metadata+'/ready.tmp '+metadata+'/ready', 'bye',

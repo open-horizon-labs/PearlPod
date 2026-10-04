@@ -3,15 +3,38 @@ services:
     build:
       context: ..
       dockerfile: syncer/Dockerfile
+    image: pearlpod-syncer:local
     user: "${PEARLPOD_UID:-1000}:${PEARLPOD_GID:-1000}"
     network_mode: host
     restart: unless-stopped
+    stop_grace_period: 10s
     volumes:
-      - ${PEARLPOD_MUSIC}:/music:ro
-      - ${PEARLPOD_CACHE}:/cache
+      - ${PEARLPOD_MUSIC:?Set music path}:/music:ro
+      - ${PEARLPOD_CACHE:?Set cache path}:/cache
     secrets:
       - plex_token
-    command: ["--plex-token", "/run/secrets/plex_token", "--music", "/music", "--cache", "/cache", "--advertise-ip", "${PEARLPOD_HOST_IP}"]
+    command:
+      - --plex-token
+      - /run/secrets/plex_token
+      - --plex-url
+      - ${PEARLPOD_PLEX_URL:-http://192.0.2.2:32400}
+      - --source-root
+      - ${PEARLPOD_SOURCE_ROOT:-/share/Media/Music}
+      - --music
+      - /music
+      - --cache
+      - /cache
+      - --advertise-ip
+      - ${PEARLPOD_HOST_IP:?Set LAN IP}
+      - --poll-interval
+      - ${PEARLPOD_POLL_INTERVAL:-60}
+      - --cache-limit
+      - ${PEARLPOD_CACHE_LIMIT:-21474836480}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 secrets:
   plex_token:
-    file: ${PEARLPOD_PLEX_TOKEN}
+    file: ${PEARLPOD_PLEX_TOKEN:?Set host token path}

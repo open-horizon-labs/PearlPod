@@ -4,6 +4,8 @@ import io
 import json
 import re
 import subprocess
+import os
+import tempfile
 from pathlib import Path
 from PIL import Image, ImageOps
 from mutagen import File
@@ -34,12 +36,21 @@ def source_digest(source,cache):
     memo=directory/(key+'.json');state=fingerprint(source)
     if memo.exists():
         stored=json.loads(memo.read_text())
-        if stored.get('stat')==state and re.fullmatch('[a-f0-9]{64}',stored.get('sha','')):return stored['sha']
+        if stored.get('stat')==state and re.fullmatch('[a-f0-9]{64}',stored.get('sha','')):
+            memo.touch()
+            return stored['sha']
     value=unchanged_digest(source)
-    temporary=memo.with_suffix('.tmp')
-    temporary.write_text(json.dumps({'stat':state,'sha':value}))
-    temporary.replace(memo)
+    write_json(memo,{'stat':state,'sha':value})
     return value
+
+
+def write_json(path,value):
+    fd,name=tempfile.mkstemp(dir=path.parent,suffix='.tmp')
+    try:
+        with os.fdopen(fd,'w') as out:json.dump(value,out)
+        os.replace(name,path)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 def digest(path):
@@ -156,16 +167,19 @@ def store_bytes(objects, data, extension):
     name = hashlib.sha256(data).hexdigest() + extension
     target = objects / name
     if not target.exists() or unchanged_digest(target) != name[:64]:
-        temporary = target.with_suffix(target.suffix+'.tmp')
-        with temporary.open('wb') as out:
-            out.write(data); out.flush(); __import__('os').fsync(out.fileno())
-        temporary.replace(target)
+        fd,temporary = tempfile.mkstemp(dir=objects,suffix='.tmp')
+        try:
+            with os.fdopen(fd,'wb') as out:
+                out.write(data); out.flush(); os.fsync(out.fileno())
+            os.replace(temporary,target)
+        finally:Path(temporary).unlink(missing_ok=True)
     return name
 
 
-def prepare(track, cache, plex_cover=b''):
+def prepare(track, cache, plex_cover=b'', cache_limit=20*1024**3):
     source = Path(track['source'])
     before = source.stat()
+    initial_fingerprint = fingerprint(source)
     media = File(source)
     metadata = dict(track)
     easy = File(source, easy=True)
@@ -188,10 +202,22 @@ def prepare(track, cache, plex_cover=b''):
     mappings = cache / 'prepared'; mappings.mkdir(exist_ok=True)
     memo = mappings / (signature + '.json')
     if memo.exists():
-        name = json.loads(memo.read_text())['audio']
-        if not (objects/name).is_file() or unchanged_digest(objects/name) != name[:64]: memo.unlink()
+        saved = json.loads(memo.read_text())
+        name = saved['audio']
+        if not (objects/name).is_file():
+            memo.unlink()
+        elif saved.get('audio_stat') != fingerprint(objects/name):
+            if unchanged_digest(objects/name) != name[:64]:
+                memo.unlink()
+            else:
+                write_json(memo,{'audio':name,'audio_stat':fingerprint(objects/name)})
     if not memo.exists():
-        temp = objects / (signature + '.preparing.mp3')
+        from cache import enforce_budget
+        reserve=max(int(track.get('duration_ms') or 0)*40, before.st_size)+2*1024*1024
+        enforce_budget(cache, cache_limit, reserve*2)
+        fd,temporary=tempfile.mkstemp(dir=objects,suffix='.preparing.mp3')
+        os.close(fd)
+        temp=Path(temporary)
         codec = ['-c:a','copy'] if source.suffix.lower()=='.mp3' else ['-c:a','libmp3lame','-b:a','256k','-ar','48000','-ac','2']
         command = ['ffmpeg','-nostdin','-v','error','-y','-i',str(source),'-map','0:a:0',*codec,'-map_metadata','-1','-map_chapters','-1',str(temp)]
         try:
@@ -205,11 +231,12 @@ def prepare(track, cache, plex_cover=b''):
             if art: id3.add(APIC(encoding=0,mime='image/jpeg',type=3,desc='Cover',data=art))
             id3.save(temp, v2_version=3, padding=lambda _: 0)
             name = digest(temp)+'.mp3'; temp.replace(objects/name)
-            memo.write_text(json.dumps({'audio':name}))
+            write_json(memo,{'audio':name,'audio_stat':fingerprint(objects/name)})
         finally:
             temp.unlink(missing_ok=True)
-    else: name=json.loads(memo.read_text())['audio']
-    after=source.stat()
-    if (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns): raise ValueError('Source changed during preparation')
+    else:
+        name=json.loads(memo.read_text())['audio']
+        memo.touch()
+    if fingerprint(source) != initial_fingerprint: raise ValueError('Source changed during preparation')
     return {'track':name, 'album_id':metadata['album_id'], 'genres':metadata['genres'], 'lyrics':lyrics,
             'art':store_bytes(objects,art,'.jpg') if art else '', 'id':track['id']}
