@@ -18,11 +18,11 @@ static void swipe(int x1,int y1,int x2,int y2){frame(x1,y1,true);for(int i=1;i<=
 static void capture(const char *path){work();lv_refr_now(NULL);FILE *f=fopen(path,"wb");assert(f);fprintf(f,"P6\n460 460\n255\n");fwrite(framebuffer,1,sizeof(framebuffer),f);fclose(f);}
 int main(int argc,char **argv){assert(argc==2);lv_init();static lv_color_t draw[460*80];static lv_disp_draw_buf_t buf;lv_disp_draw_buf_init(&buf,draw,NULL,460*80);static lv_disp_drv_t drv;lv_disp_drv_init(&drv);drv.hor_res=drv.ver_res=460;drv.draw_buf=&buf;drv.flush_cb=flush;lv_disp_drv_register(&drv);static lv_indev_drv_t input;lv_indev_drv_init(&input);input.type=LV_INDEV_TYPE_POINTER;input.read_cb=read_touch;lv_indev_drv_register(&input);
  static pearl_album albums[3];static pearl_track tracks[70];static pearl_library library={.albums=albums,.tracks=tracks,.album_count=3,.track_count=70};
- const char *names[]={"Hero training mix","After-school adventures","Quiet night soundtracks"};for(int i=0;i<3;i++){albums[i].title=strdup(names[i]);albums[i].artist=strdup("Listener");albums[i].path=strdup("");albums[i].art=strdup(i?"":"assets/pearl-welcome.png");albums[i].first=i?68+i-1:0;albums[i].count=i?1:68;}
+ const char *names[]={"Hero training mix","After-school adventures","Quiet night soundtracks"};for(int i=0;i<3;i++){albums[i].title=strdup(names[i]);albums[i].artist=strdup("Listener");albums[i].path=strdup("");albums[i].art=strdup(i?"":"theme-packs/Default/Themes/midnight/welcome-01.png");albums[i].first=i?68+i-1:0;albums[i].count=i?1:68;}
  for(int i=0;i<70;i++){char text[PEARL_NAME];snprintf(text,sizeof(text),"%02d  %s",i+1,i?"A song for the way home":"You Say Run - Sample soundtrack");tracks[i].title=strdup(text);tracks[i].path=strdup("");tracks[i].artist=strdup("Listener");tracks[i].album=i<68?0:i-67;}
  static pearl_collection collections[3];library.collections=collections;library.collection_count=3;for(int i=0;i<3;i++){collections[i].title=albums[i].title;collections[i].path=albums[i].path;collections[i].kind=PEARL_ALBUMS;collections[i].count=albums[i].count;collections[i].tracks=calloc(collections[i].count,sizeof(unsigned));for(unsigned j=0;j<collections[i].count;j++)collections[i].tracks[j]=albums[i].first+j;}
  pearl_ui_start();char path[512];snprintf(path,sizeof(path),"%s/boot.ppm",argv[1]);capture(path);
- assert(!lib&&!shutting_down&&!art_requests->count);assert(!strcmp(lv_label_get_text(heading),"Hi, Listener!"));assert(lv_obj_has_flag(nav,LV_OBJ_FLAG_HIDDEN));tap(340,420);assert(page==-2&&!lib);
+ assert(!lib&&!shutting_down&&!art_requests->count);assert(!strcmp(lv_label_get_text(heading),"Hello!"));assert(lv_obj_has_flag(nav,LV_OBJ_FLAG_HIDDEN));tap(340,420);assert(page==-2&&!lib);
  pearl_ui_ready(&library,"");assert(page==-1&&!lv_obj_has_flag(nav,LV_OBJ_FLAG_HIDDEN));snprintf(path,sizeof(path),"%s/browse.ppm",argv[1]);capture(path);page=0;render();snprintf(path,sizeof(path),"%s/tracks.ppm",argv[1]);capture(path);page=-3;render();snprintf(path,sizeof(path),"%s/playing.ppm",argv[1]);capture(path);
  page=-4;render();snprintf(path,sizeof(path),"%s/library.ppm",argv[1]);capture(path);
  host_sync_view=(pearl_sync_view){.title="Ready to sync",.detail="Bring your playlists along",.context="Add PP: playlists in Plex. Keep the library computer running. Pause music before starting."};
@@ -47,13 +47,21 @@ int main(int argc,char **argv){assert(argc==2);lv_init();static lv_color_t draw[
  lv_obj_t *hidden[]={nav,transport,back,page_prev,page_next,time_label,volume_label,hint};for(unsigned i=0;i<sizeof(hidden)/sizeof(hidden[0]);i++)assert(lv_obj_has_flag(hidden[i],LV_OBJ_FLAG_HIDDEN));
  // A late artwork response, old control locations and a swipe cannot replace farewell.
  old=(art_result){malloc(PEARL_ART_SIZE*PEARL_ART_SIZE*2),prior_generation,-1};assert(xQueueSend(art_results,&old,0));tick(NULL);assert(!art_results->count&&!art_pixels);selected=state.track;bool paused=state.paused;
- tap(200,420);tap(200,180);swipe(90,190,330,190);assert(shutting_down&&page==0&&state.track==selected&&state.paused==paused);assert(!strcmp(lv_label_get_text(heading),"See you soon, Listener!"));
+ tap(200,420);tap(200,180);swipe(90,190,330,190);assert(shutting_down&&page==0&&state.track==selected&&state.paused==paused);assert(!strcmp(lv_label_get_text(heading),"See you soon!"));
  pearl_ui_shutdown_begin();pearl_ui_shutdown_cancel("Card busy. Hold again to turn off.");assert(!shutting_down&&page==0&&lv_obj_get_scroll_y(body)==position);assert(!strcmp(lv_label_get_text(status),"Card busy. Hold again to turn off."));
  snprintf(path,sizeof(path),"%s/shutdown-retry.ppm",argv[1]);capture(path);
  // Sync completion can initiate a rescan while shutdown waits. Keep farewell
  // visible until either sleep succeeds or cancellation restores the new library.
- pearl_ui_shutdown_begin();pearl_ui_scanning();pearl_ui_ready(&library,"");tick(NULL);lv_obj_update_layout(lv_scr_act());assert(shutting_down&&!strcmp(lv_label_get_text(heading),"See you soon, Listener!"));assert(lv_obj_has_flag(nav,LV_OBJ_FLAG_HIDDEN));
+ pearl_ui_shutdown_begin();pearl_ui_scanning();pearl_ui_ready(&library,"");tick(NULL);lv_obj_update_layout(lv_scr_act());assert(shutting_down&&!strcmp(lv_label_get_text(heading),"See you soon!"));assert(lv_obj_has_flag(nav,LV_OBJ_FLAG_HIDDEN));
  pearl_ui_shutdown_cancel("Scanning card. Hold again when ready.");assert(!shutting_down&&page==-1&&!lv_obj_has_flag(nav,LV_OBJ_FLAG_HIDDEN));
  // Empty/missing-card startup is still navigable; it has no forced splash dwell.
  pearl_library empty={0};pearl_ui_ready(&empty,"Card not ready. Insert a FAT32 card and restart.");assert(page==-1&&!lv_obj_has_flag(nav,LV_OBJ_FLAG_HIDDEN));tick(NULL);assert(strstr(lv_label_get_text(status),"Card not ready"));
+ // Render both themes and both scene variants through the production lifecycle UI.
+ for(unsigned seq=0;seq<4;seq++){
+   reset_body();pearl_theme_load("theme-packs/Default",seq);pearl_ui_theme_ready();lifecycle_screen(false);shutting_down=true;
+   assert(strstr(lv_label_get_text(heading),"Listener"));
+   snprintf(path,sizeof(path),"%s/theme-%u-welcome.ppm",argv[1],seq);capture(path);
+   lifecycle_screen(true);snprintf(path,sizeof(path),"%s/theme-%u-farewell.ppm",argv[1],seq);capture(path);
+ }
+ reset_body();pearl_theme_clear();
  printf("LVGL navigation, lyrics, sync states, sleep/wake, immediate boot handoff, shutdown input isolation, stale-art cleanup, rescan race and failed-shutdown recovery pass.\n");return 0;}

@@ -27,3 +27,6 @@ python3 tests/test_recovery.py
 cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_power_policy.c main/power_policy.c -o /tmp/pearl-power-policy
 /tmp/pearl-power-policy
 python3 tests/test_shutdown.py
+
+cc -std=c17 -D_DARWIN_C_SOURCE -DPEARL_THEME_TEST -Wall -Wextra -Werror -fsanitize=address,undefined -I main -I vendor tests/test_theme.c main/theme.c vendor/tomlc17.c -lm -o /tmp/pearl-theme-tests
+/tmp/pearl-theme-tests

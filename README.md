@@ -1,6 +1,6 @@
 # PearlPod
 
-Offline anime-themed music firmware for Listener’s CS43131 FakePod Nano. The installed player supports MP3, FLAC and WAV, nested microSD albums, touchscreen playback, artwork and physical volume controls. Music playback stays offline; WiFi setup is an explicit action. The local firmware candidate adds Plex playlist sync and lyrics; on-device acceptance is pending.
+Offline anime-themed music firmware for Listener’s CS43131 FakePod Nano. The installed player supports MP3, FLAC and WAV, nested microSD albums, touchscreen playback, artwork and physical volume controls. Music playback stays offline; WiFi setup is an explicit action. Plex playlist sync is device-tested, including interrupted transfers and incremental playlist updates. Lyrics are available when supplied; timed lyric appearance still needs a physical visual check.
 
 ## Everyday controls
 
@@ -83,3 +83,7 @@ hidden = true
 The complete valid file replaces the saved network list in one storage operation. The player removes `wifi.toml` only after a successful import; failed parsing or storage preserves the file and previous networks. If removal fails, it reports that the imported file remains. WiFi stays off at boot; open WiFi → Connect saved network when needed. A single `[wlan]` section is also accepted in place of the repeated entries, using the familiar Pi field names; this is a PearlPod schema, not a general Raspberry Pi configuration importer. Encrypted Pi passwords and unrelated Pi settings are unsupported. The file is limited to 8 KiB, SSIDs to 32 UTF-8 bytes, and passphrases to 8–63 bytes or empty. Malformed, duplicate or excess entries reject the whole import. Never commit a real credentials file.
 
 The current device is on the recovered working firmware; microSD import is included in the locally built candidate package. See [fact-check and implementation evidence](docs/CARD-WIFI.md).
+
+## Personalization
+
+Firmware uses a neutral fallback. Copy `theme-packs/Default/` into the card’s `music/` folder for Listener’s two anime packs with rotating welcome/farewell scenes. The name, favorite themes, palette, pictures and phrases live on the card, separate from firmware. See [theme-pack installation and format](docs/THEME-PACKS.md).

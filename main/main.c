@@ -17,6 +17,7 @@
 
 #include "lvgl.h"
 #include "player.h"
+#include "theme.h"
 #include "network.h"
 #include "power.h"
 #include "power_policy.h"
@@ -691,6 +692,13 @@ static void library_task(void *arg)
     if(e!=ESP_OK){ESP_LOGE("pearl","SD mount failed: %s (0x%x)",esp_err_to_name(e),(unsigned)e);free(sd_dma);sd_dma=NULL;}
     else {if(pearl_replace_recover("/sdcard/music"))ESP_LOGE("pearl","Upload replacement recovery failed errno=%d",errno);mounted_card=card;sd_dma_bytes=sd_dma?8192:0;pearl_trace_attach(card);}
     if(e==ESP_OK)ESP_LOGW("pearl","SDMMC actual_khz=%d bus_width=%d sector=%d bounce_bytes=%u chunk_sectors=%u",card->real_freq_khz,card->log_bus_width==2?4:1,card->csd.sector_size,sd_dma?8192u:0u,16u);
+    if(e==ESP_OK){
+        uint32_t sequence=0;nvs_handle_t appearance;
+        if(nvs_open("appearance",NVS_READWRITE,&appearance)==ESP_OK){nvs_get_u32(appearance,"sequence",&sequence);nvs_set_u32(appearance,"sequence",sequence+1);nvs_commit(appearance);nvs_close(appearance);}
+        pearl_theme_load("/sdcard/music",sequence);
+        if(example_lvgl_lock(-1)){pearl_ui_theme_ready();example_lvgl_unlock();}
+        ESP_LOGW("pearl","Theme %s ready at %lld ms",pearl_theme_current()->id,esp_timer_get_time()/1000);
+    }
     const char *err="";
     if(e!=ESP_OK)err="Card not ready. Insert a FAT32 card and restart.";
     else if(pearl_library_scan(&music,"/sdcard/music"))err="Add a music folder to your card, then restart.";

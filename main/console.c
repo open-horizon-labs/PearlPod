@@ -1,4 +1,5 @@
 #include "player.h"
+#include "theme.h"
 #include "network.h"
 #include "captive_dns.h"
 #include "sync.h"
@@ -19,6 +20,7 @@ extern void pearl_sd_trace(char *out,unsigned size);
 static pearl_library *lib;
 static void run(const char *line){
  if(!strcmp(line,"status")){pearl_state s=pearl_audio_state();printf("PEARL status ready=%d track=%d paused=%d volume=%d seconds=%lu error=%s\n",s.ready,s.track,s.paused,s.volume,(unsigned long)s.seconds,s.error);}
+ else if(!strcmp(line,"theme")){const pearl_theme *t=pearl_theme_current();printf("PEARL theme id=%s name=%s welcome=%s farewell=%s welcome_pixels=%d farewell_pixels=%d\n",t->id,t->name,t->welcome.heading,t->farewell.heading,t->welcome.pixels!=NULL,t->farewell.pixels!=NULL);}
  else if(!strcmp(line,"list")){if(!pearl_library_lock())return;printf("PEARL library albums=%u tracks=%u\n",lib->album_count,lib->track_count);for(unsigned i=0;i<lib->track_count;i++)printf("PEARL track %u %s\n",i,lib->tracks[i].path);pearl_library_unlock();}
  else if(!strcmp(line,"groups")){if(!pearl_library_lock())return;for(unsigned i=0;i<lib->collection_count;i++)printf("PEARL group %u kind=%u tracks=%u %s\n",i,lib->collections[i].kind,lib->collections[i].count,lib->collections[i].title);pearl_library_unlock();}
  else if(!strncmp(line,"playgroup ",10)){int group,position;if(sscanf(line+10,"%d %d",&group,&position)==2)pearl_audio_play_collection(group,position);}
