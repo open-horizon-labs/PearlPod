@@ -6,4 +6,4 @@ The original repository and releases are preserved in a private archive. A fresh
 
 Firmware releases are binary assets, never committed into Git history. Public packages contain neutral firmware and original theme packs. Recovery refuses ambiguous USB interfaces, accepts an explicit port, retries at most twenty times by default and stops on success. It does not identify the DAC variant from USB.
 
-Verification includes a complete all-ref secret scan, targeted personal-data scan, host firmware regression suite, actual LVGL renderer, syncer regression tests and public download checksum validation. These checks reduce disclosure risk but cannot prove the absence of every possible personal detail.
+Verification passed a complete all-ref secret scan, targeted personal-data scan, host firmware regression suite, actual LVGL renderer, syncer regression tests (26 cases, three environment-dependent skips) and public download checksum validation. These checks reduce disclosure risk but cannot prove the absence of every possible personal detail.
