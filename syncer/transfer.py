@@ -1,5 +1,6 @@
 """Single-session lftp delivery; completion marker is uploaded last."""
 import ftplib
+import errno
 import io
 import ipaddress
 import json
@@ -7,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import shutil
 import tempfile
 import time
 
@@ -114,7 +116,9 @@ def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=
     existing=inventory(ip,port,normal) if normal else {}
     original_sizes=dict(existing)
     previous=receipt(ip,port) if normal else identities
-    changed={name for name,source in identities.items() if previous.get(name)!=source}
+    # A card used before receipts existed is a normal music card. Reuse its
+    # complete files by length; only a known identity change forces replacement.
+    changed={name for name,source in identities.items() if name in previous and previous[name]!=source}
     if free_bytes is not None:
         required={}
         for line in catalog.read_text().splitlines():
@@ -139,7 +143,10 @@ def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=
             else:source=name
             if not re.fullmatch(r'[a-f0-9]{64}\.(mp3|jpg|lrc|srt|vtt|txt|m3u8)',source):raise ValueError('Unsafe cache source')
             target=staged/name;target.parent.mkdir(parents=True,exist_ok=True)
-            os.link(cache/'objects'/source,target)
+            try:os.link(cache/'objects'/source,target)
+            except OSError as error:
+                if error.errno not in (errno.EXDEV,errno.EOPNOTSUPP,errno.ENOTSUP):raise
+                shutil.copyfile(cache/'objects'/source,target)
         delivered=Path(directory)/'delivered.json';delivered.write_text(json.dumps(identities))
         forced=[]
         for name in sorted(changed):
@@ -193,7 +200,14 @@ def deliver(cache, head, address, port=21, timeout=7200, free_bytes=None, trace=
         # No shell and no credentials; capture output instead of logging household data.
         mark('staging_ms',before)
         before=time.monotonic()
-        subprocess.run(['lftp','-f',str(path)],check=True,timeout=timeout,capture_output=True)
+        try:
+            subprocess.run(['lftp','-f',str(path)],check=True,timeout=timeout,capture_output=True)
+        except subprocess.CalledProcessError as error:
+            # Only our anonymous FTP client runs here; retain its bounded failure
+            # text so a failed transfer has an actionable cause in /status.
+            metrics['transfer_error']=error.stderr.decode('utf-8',errors='replace')[-2048:]
+            mark('lftp_ms',before)
+            raise
         mark("lftp_ms",before)
         mark("total_ms",started)
     return sha

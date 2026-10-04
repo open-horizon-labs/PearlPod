@@ -43,9 +43,9 @@ def prepare_cached(track,cache,cover,inputs,cover_hash,cache_limit):
     return result
 
 
-def publish(server, source_root, local_root, cache, cache_limit=20*1024**3):
+def publish(server, source_root, local_root, cache, cache_limit=20*1024**3, playlist_prefix='PP:', open_share=None):
     cache.mkdir(parents=True, exist_ok=True)
-    selected = snapshot(server, source_root, local_root)
+    selected = snapshot(server, source_root, local_root, playlist_prefix)
     from media import fingerprint
     from cache import maintain
     prepared = {}
@@ -90,7 +90,7 @@ def publish(server, source_root, local_root, cache, cache_limit=20*1024**3):
         source=store_bytes(objects,data,'.m3u8');asset(name,source)
         display=playlist['title'].encode()[:159].decode('utf-8',errors='ignore')
         records.append({'playlist':name,'title':display,'full_title':playlist['title'],'id':playlist['id']})
-    if canonical(snapshot(server,source_root,local_root)) != canonical(selected):
+    if canonical(snapshot(server,source_root,local_root,playlist_prefix)) != canonical(selected):
         raise ValueError('Plex selection changed during preparation')
     with ThreadPoolExecutor(max_workers=4) as pool:
         for album_id, raw in pool.map(artwork,album_thumbs):
@@ -115,6 +115,9 @@ def publish(server, source_root, local_root, cache, cache_limit=20*1024**3):
     except (OSError,ValueError,KeyError,TypeError):pass
     maintain(cache, cache_limit)
     temporary=cache/'head.tmp'; temporary.write_bytes(canonical(head)); os.replace(temporary,cache/'head.json')
+    if open_share is not None:
+        from open_share import materialize
+        materialize(cache, head, open_share)
     return head
 
 
@@ -129,10 +132,13 @@ def main():
     p.add_argument('--music', type=Path, required=True)
     p.add_argument('--cache', type=Path, required=True)
     p.add_argument('--cache-limit', type=int, required=True)
+    p.add_argument('--playlist-prefix', default='PP:')
+    p.add_argument('--open-share', type=Path)
     a = p.parse_args()
     maintain(a.cache, a.cache_limit)
     server = PlexServer(a.plex_url, token=a.plex_token.read_text().strip(), timeout=15)
-    publish(server, a.source_root, a.music, a.cache, a.cache_limit)
+    publish(server, a.source_root, a.music, a.cache, a.cache_limit,
+            a.playlist_prefix, a.open_share)
 
 
 if __name__ == '__main__':

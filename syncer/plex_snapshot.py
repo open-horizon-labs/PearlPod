@@ -7,12 +7,12 @@ import tempfile
 from plexapi.server import PlexServer
 
 
-def snapshot(server, source_root, local_root):
+def snapshot(server, source_root, local_root, playlist_prefix='PP:'):
     local_root = local_root.resolve(strict=True)
     lists = []
     tracks = {}
     for playlist in server.playlists():
-        if playlist.playlistType != 'audio' or not playlist.title.startswith('PP:'):
+        if playlist.playlistType != 'audio' or not playlist.title.startswith(playlist_prefix):
             continue
         entries = []
         for item in playlist.items():
@@ -34,7 +34,7 @@ def snapshot(server, source_root, local_root):
                 'genres': [g.tag for g in getattr(item, 'genres', [])],
                 'bytes': path.stat().st_size,
             }
-        lists.append({'id': str(playlist.ratingKey), 'title': playlist.title[3:].strip(), 'entries': entries})
+        lists.append({'id': str(playlist.ratingKey), 'title': playlist.title[len(playlist_prefix):].strip(), 'entries': entries})
     return {'format': 1, 'server_id': server.machineIdentifier, 'playlists': lists, 'tracks': tracks}
 
 

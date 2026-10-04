@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 : "${IDF_PATH:?Source ESP-IDF 5.5.5 export.sh first}"
 version=$(git -C "$IDF_PATH" describe --tags --exact-match)
 [ "$version" = v5.5.5 ] || { echo "Expected ESP-IDF v5.5.5, got $version"; exit 1; }
+python tools/apply-idf-patches.py
 idf.py build
 idf.py merge-bin -o pearl-player-merged.bin
 mkdir -p dist

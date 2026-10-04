@@ -67,6 +67,7 @@
 #endif
 
 #include "ftp.h"
+#include "replace.h"
 
 
 
@@ -166,10 +167,11 @@ static bool ftp_open_file (const char *path, const char *mode) {
     /* Reads use PSRAM stdio buffering. The SD worker writes directly from
      * its aligned internal buffer; no stdio layer should split DMA batches. */
     if(setvbuf(ftp_data.fp,mode[0]=='r'?file_buffer:NULL,mode[0]=='r'?_IOFBF:_IONBF,mode[0]=='r'?32768:0)!=0) {
+        ESP_LOGW(FTP_TAG,"Buffer setup failed path=%s errno=%d",path,errno);
         fclose(ftp_data.fp);ftp_data.fp=NULL;return false;
     }
     file_failed=false;async_file=mode[0]!='r';
-    if(async_file&&!pearl_writer_begin(writer,ftp_data.fp)){fclose(ftp_data.fp);ftp_data.fp=NULL;async_file=false;return false;}
+    if(async_file&&!pearl_writer_begin(writer,ftp_data.fp)){ESP_LOGW(FTP_TAG,"Writer begin failed path=%s",path);fclose(ftp_data.fp);ftp_data.fp=NULL;async_file=false;return false;}
 	ftp_data.e_open = E_FTP_FILE_OPEN;
 	return true;
 }
@@ -1052,9 +1054,10 @@ static void ftp_process_cmd (void) {
 			ESP_LOGI(FTP_TAG, "E_FTP_CMD_RNTO fullname2=[%s]", fullname2);
 
 			//if (rename((char *)ftp_data.dBuffer, ftp_path) == 0) {
-			if (rename(fullname, fullname2) == 0) {
+			if (pearl_replace_file(MOUNT_POINT,fullname,fullname2) == 0) {
 				ftp_send_reply(250, NULL);
 			} else {
+                ESP_LOGW(FTP_TAG,"Rename failed source=%s destination=%s errno=%d",fullname,fullname2,errno);
 				ftp_send_reply(550, NULL);
 			}
 			break;

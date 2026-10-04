@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,7 +44,7 @@ class ProgressTests(unittest.TestCase):
             for lyric in track.get('lyrics',[]):required.update((lyric['file'],lyric['original']))
         records=[{'format':2}]+[files[name] for name in sorted(required)]+tracks
         for name in required:
-            os.link(source/'objects'/files[name]['cache_source'],cache/'objects'/files[name]['cache_source'])
+            shutil.copyfile(source/'objects'/files[name]['cache_source'],cache/'objects'/files[name]['cache_source'])
         for title,selected in (('After school',[tracks[0],tracks[0]]),('Weekend',[tracks[0],tracks[1]])):
             name='Playlists/'+title+'.m3u8'
             data=('#EXTM3U\n'+''.join('../'+track['track']+'\n' for track in selected)).encode()

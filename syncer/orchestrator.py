@@ -25,6 +25,10 @@ def run_publication(args, timeout):
                '--plex-url', args.plex_url, '--plex-token', str(args.plex_token),
                '--source-root', str(args.source_root), '--music', str(args.music),
                '--cache', str(args.cache), '--cache-limit', str(args.cache_limit)]
+    if getattr(args, 'playlist_prefix', 'PP:') != 'PP:':
+        command.extend(['--playlist-prefix', args.playlist_prefix])
+    if getattr(args, 'open_share', None) is not None:
+        command.extend(['--open-share', str(args.open_share)])
     process = subprocess.Popen(command, start_new_session=True, stdout=subprocess.PIPE,
                                stderr=subprocess.DEVNULL)
     try:

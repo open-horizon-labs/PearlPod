@@ -42,7 +42,7 @@ static void run(const char *line){
  else if(!strcmp(line,"sync"))pearl_sync_start();
  else if(!strncmp(line,"sync source ",12))printf("PEARL sync source saved=%d\n",pearl_sync_source(line+12));
  else if(!strcmp(line,"sync trace")){static EXT_RAM_BSS_ATTR char trace[1536];pearl_sync_trace(trace,sizeof(trace));printf("PEARL sync trace %s\n",trace);}
- else if(!strcmp(line,"sync status")){char msg[120];pearl_sync_status(msg,sizeof(msg));printf("PEARL sync %s\n",msg);}
+ else if(!strcmp(line,"sync status")){char msg[512];pearl_sync_status(msg,sizeof(msg));pearl_sync_view s=pearl_sync_snapshot();printf("PEARL sync %s\nPEARL sync progress saved=%u percent=%u busy=%d complete=%d\n",msg,s.playlists_ready,s.percent,s.busy,s.complete);}
  else if(!strcmp(line,"wifi portal"))printf("PEARL captive active=%d dns_replies=%u\n",pearl_captive_dns_active(),pearl_captive_dns_replies());
  else if(!strcmp(line,"wifi setup"))pearl_network_setup();
  else if(!strcmp(line,"wifi scan"))pearl_network_scan();

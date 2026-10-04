@@ -1,3 +1,5 @@
+#include <errno.h>
+#include "replace.h"
 #include <stdio.h>
 
 #include "freertos/FreeRTOS.h"
@@ -687,7 +689,7 @@ static void library_task(void *arg)
     esp_vfs_fat_sdmmc_mount_config_t cfg={.format_if_mount_failed=false,.max_files=12,.allocation_unit_size=16384};
     sdmmc_card_t *card=NULL;esp_err_t e=esp_vfs_fat_sdmmc_mount("/sdcard",&host,&slot,&cfg,&card);
     if(e!=ESP_OK){ESP_LOGE("pearl","SD mount failed: %s (0x%x)",esp_err_to_name(e),(unsigned)e);free(sd_dma);sd_dma=NULL;}
-    else {mounted_card=card;sd_dma_bytes=sd_dma?8192:0;pearl_trace_attach(card);}
+    else {if(pearl_replace_recover("/sdcard/music"))ESP_LOGE("pearl","Upload replacement recovery failed errno=%d",errno);mounted_card=card;sd_dma_bytes=sd_dma?8192:0;pearl_trace_attach(card);}
     if(e==ESP_OK)ESP_LOGW("pearl","SDMMC actual_khz=%d bus_width=%d sector=%d bounce_bytes=%u chunk_sectors=%u",card->real_freq_khz,card->log_bus_width==2?4:1,card->csd.sector_size,sd_dma?8192u:0u,16u);
     const char *err="";
     if(e!=ESP_OK)err="Card not ready. Insert a FAT32 card and restart.";

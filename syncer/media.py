@@ -154,8 +154,7 @@ def lyric_sources(path, media):
         language = stem[len(path.stem):].lstrip('.') or 'und'
         found.append((language, candidate.suffix.lower(), raw))
     if not found and media and media.tags:
-        for key in media.tags:
-            value = media.tags[key]
+        for key, value in media.tags.items():
             if key.startswith('USLT'): found.append((value.lang or 'und', '.txt', value.text.encode()))
             elif key.lower() in ('lyrics', 'unsyncedlyrics'):
                 text = '\n'.join(value) if isinstance(value, list) else str(value)

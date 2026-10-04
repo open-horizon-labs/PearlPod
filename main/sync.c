@@ -45,6 +45,7 @@ static bool content_update(const char *json) {
   taskENTER_CRITICAL(&progress_lock);
   bool ok=pearl_progress_update(&content_progress,&info,(uint32_t)(esp_timer_get_time()/1000));
   taskEXIT_CRITICAL(&progress_lock);
+  if(ok&&!strcmp(info.kind,"saved"))ESP_LOGW("sync","Playlist saved: %s (%u/%u)",info.playlist,info.playlists_ready,info.playlist_count);
   return ok;
 }
 static const char *messages[] = {
@@ -108,7 +109,8 @@ void pearl_sync_status(char *out, unsigned size) {
 void pearl_sync_cancel(void) { atomic_store(&cancel,true); }
 bool pearl_sync_busy(void) { return atomic_load(&busy); }
 bool pearl_sync_source(const char *url) {
-  if (strncmp(url, "http://", 7) || strlen(url) > 160 || strchr(url, '\n') ||
+  if(!strcmp(url,"auto"))url="";
+  if ((url[0]&&strncmp(url, "http://", 7)) || strlen(url) > 160 || strchr(url, '\n') ||
       strchr(url, '@'))
     return false;
 
@@ -130,6 +132,38 @@ static __attribute__((noinline)) bool connected(void) {
   bool value = pearl_network_connected();
   atomic_fetch_add(&network_us,(unsigned)(esp_timer_get_time()-before));
   return value;
+}
+static bool library_alive(const char *base) {
+  char health[208];
+  size_t n=strlen(base);
+  if(n&&base[n-1]=='/')n--;
+  snprintf(health,sizeof(health),"%.*s/health",(int)n,base);
+  esp_http_client_config_t config={.url=health,.timeout_ms=1500,
+    .buffer_size=512,.disable_auto_redirect=true};
+  esp_http_client_handle_t client=esp_http_client_init(&config);
+  if(!client)return false;
+  esp_err_t result=esp_http_client_perform(client);
+  int status=esp_http_client_get_status_code(client);
+  esp_http_client_cleanup(client);
+  ESP_LOGI("sync","Library probe %s result=%s status=%d",base,esp_err_to_name(result),status);
+  return result==ESP_OK&&status==200;
+}
+static void choose_library(char *url,unsigned size,const char *saved,bool dns) {
+  if(dns) {
+    mdns_result_t *results=NULL;
+    if(mdns_query_ptr("_pearlpod-sync","_tcp",3000,8,&results)==ESP_OK&&results) {
+      for(mdns_result_t *service=results;service&&!url[0]&&!atomic_load(&cancel);service=service->next)
+        for(mdns_ip_addr_t *ip=service->addr;ip&&!url[0]&&!atomic_load(&cancel);ip=ip->next)
+          if(ip->addr.type==ESP_IPADDR_TYPE_V4) {
+            char candidate[200];
+            snprintf(candidate,sizeof(candidate),"http://" IPSTR ":%u",IP2STR(&ip->addr.u_addr.ip4),service->port);
+            if(library_alive(candidate))snprintf(url,size,"%s",candidate);
+          }
+      mdns_query_results_free(results);
+    }
+  }
+  /* Saved addresses are a fallback, never a reason to skip LAN discovery. */
+  if(!url[0]&&saved[0]&&!atomic_load(&cancel)&&library_alive(saved))snprintf(url,size,"%s",saved);
 }
 static void task(void *arg) {
   (void)arg;
@@ -160,13 +194,13 @@ static void task(void *arg) {
   ps_result=esp_wifi_set_ps(WIFI_PS_NONE); /* Radio is off at completion. */
   stage = 2;
   int64_t discovery_start=esp_timer_get_time();
-  char url[200] = {0};
+  char url[200] = {0},saved[200]={0};
   nvs_handle_t h;
 
   if(probe_url[0])snprintf(url,sizeof(url),"%s",probe_url);
   else if (nvs_open("pearl_sync", NVS_READONLY, &h) == ESP_OK) {
-    size_t n = sizeof(url);
-    nvs_get_str(h, "source", url, &n);
+    size_t n = sizeof(saved);
+    nvs_get_str(h, "source", saved, &n);
     nvs_close(h);
   }
   if (mdns_init() == ESP_OK) {
@@ -181,24 +215,11 @@ static void task(void *arg) {
     mdns_txt_item_t txt[] = {{"version", "1"}, {"ftp_port", "2121"}};
     mdns_service_add("PearlPod", "_pearlpod", "_tcp", 80, txt, 2);
 
-    if (!url[0]) {
-      mdns_result_t *results = NULL;
-
-      if (mdns_query_ptr("_pearlpod-sync", "_tcp", 3000, 1, &results) ==
-              ESP_OK &&
-          results) {
-        for (mdns_ip_addr_t *ip = results->addr; ip; ip = ip->next)
-          if (ip->addr.type == ESP_IPADDR_TYPE_V4) {
-            snprintf(url, sizeof(url), "http://" IPSTR ":%u",
-                     IP2STR(&ip->addr.u_addr.ip4), results->port);
-            break;
-          }
-        mdns_query_results_free(results);
-      }
-    }
   }
+  if(!probe_url[0])choose_library(url,sizeof(url),saved,dns);
   discovery_us=esp_timer_get_time()-discovery_start;
   if (!url[0]) { failure=10; goto done; }
+  ESP_LOGW("sync","Selected library %s",url);
 
   mkdir("/sdcard/music/.pearl", 0755);
   mkdir("/sdcard/music/.pearl/objects", 0755);

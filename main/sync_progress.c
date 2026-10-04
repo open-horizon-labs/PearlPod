@@ -70,7 +70,9 @@ void pearl_progress_sample(pearl_transfer_progress *p, uint64_t file_bytes, uint
   uint32_t dt=now-p->sample_ms;
   if (dt>=1000) {
     double rate=next>=p->sample_bytes?(double)(next-p->sample_bytes)*1000/dt:0;
-    p->rate=p->sampled?p->rate*0.75+rate*0.25:rate;
+    /* A one-second WiFi/SD stall should not turn a ten-minute estimate into
+     * an hour. Smooth over roughly twenty samples, while stalls remain explicit. */
+    p->rate=p->sampled?p->rate*0.95+rate*0.05:rate;
     p->sampled=true; p->sample_ms=now; p->sample_bytes=next;
   }
 }

@@ -41,5 +41,13 @@ int main(void) {
   /* Totals above 4 GiB must not wrap the percentage or remaining bytes. */
   pearl_progress_reset(&p);info.total_bytes=UINT64_C(10000000000);info.completed_bytes=UINT64_C(5000000000);info.file_bytes=1000000;
   assert(pearl_progress_update(&p,&info,0));pearl_progress_view(&p,0,&view);assert(view.percent==50);
+  /* Short SD/radio gaps should not more than halve the measured rate and
+   * wildly inflate the ETA, while the separate long-stall state still works. */
+  pearl_progress_reset(&p);info.total_bytes=100000000;info.completed_bytes=0;info.file_bytes=100000000;
+  assert(pearl_progress_update(&p,&info,0));
+  for(unsigned n=1;n<=10;n++)pearl_progress_sample(&p,n*1000000,1000*n);
+  double steady=p.rate;
+  for(unsigned n=11;n<=13;n++)pearl_progress_sample(&p,10000000,1000*n);
+  assert(p.rate>steady*0.8);
   puts("Content progress, measured ETA, stalls, retries, invalid input and large totals pass.");
 }

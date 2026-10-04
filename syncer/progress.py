@@ -17,6 +17,15 @@ def plan(rows, staged, existing, changed):
     missing={name for name,size in files.items() if existing.get(name)!=size or name in changed}
     tracks={row['track']:row for row in rows if 'track' in row}
     playlists=[row for row in rows if 'playlist' in row]
+    def needed_bytes(playlist):
+        parent=posixpath.dirname(playlist['playlist'])
+        names={posixpath.normpath(posixpath.join(parent,line))
+               for line in (staged/playlist['playlist']).read_text().splitlines()
+               if line and not line.startswith('#')}
+        return sum(files.get(name,0) for name in names if name in missing)
+    # Make already-present and small playlists usable before a long album sync.
+    # Sorting is stable, and never changes the order of songs inside a playlist.
+    playlists.sort(key=needed_bytes)
     ordered=[];seen=set();metadata={}
     def add(name, playlist='', index=0, track=None):
         if name not in missing or name in seen:return
