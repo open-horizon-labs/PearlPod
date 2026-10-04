@@ -273,5 +273,14 @@ void pearl_ui_power(bool asleep){power_asleep=asleep;if(asleep){if(!shutting_dow
 void pearl_ui_theme_ready(void){
  const pearl_theme *t=pearl_theme_current();bg=t->background;surface=t->surface;cream=t->text;yellow=t->accent;teal=t->secondary;
  lv_obj_set_style_bg_color(lv_scr_act(),lv_color_hex(bg),0);
+ lv_obj_t *texts[]={heading,time_label,volume_label};
+ for(unsigned i=0;i<3;i++)lv_obj_set_style_text_color(texts[i],lv_color_hex(cream),0);
+ lv_obj_set_style_text_color(hint,lv_color_hex(teal),0);
+ lv_obj_t *buttons[]={back,page_prev,page_next,lv_obj_get_child(nav,0),lv_obj_get_child(nav,1),lv_obj_get_child(transport,0),lv_obj_get_child(transport,1),lv_obj_get_child(transport,2)};
+ for(unsigned i=0;i<sizeof(buttons)/sizeof(buttons[0]);i++){
+  lv_obj_set_style_bg_color(buttons[i],lv_color_hex(yellow),0);
+  lv_obj_set_style_bg_color(buttons[i],lv_color_hex(teal),LV_STATE_PRESSED);
+  lv_obj_set_style_text_color(lv_obj_get_child(buttons[i],0),lv_color_hex(bg),0);
+ }
  if(!lib&&!shutting_down)lifecycle_screen(false);
 }

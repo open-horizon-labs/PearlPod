@@ -20,6 +20,7 @@ int main(void){
  snprintf(path,sizeof(path),"%s/Themes/test/theme.toml",root);write_file(path,"version=1\n[[welcome]]\nheading='Hi, {name}!'\nimage='../escape.rgb565'\n[[farewell]]\nimage='missing.rgb565'\n");
  pearl_theme_load(root,0);assert(!strcmp(pearl_theme_current()->welcome.heading,"Hi, Jonah!"));assert(!pearl_theme_current()->welcome.pixels&&!pearl_theme_current()->farewell.pixels);
  write_file(path,"version=1\n[[welcome]]\nimage='short.rgb565'\n");char image[512];snprintf(image,sizeof(image),"%s/Themes/test/short.rgb565",root);write_file(image,"short");pearl_theme_load(root,0);assert(!pearl_theme_current()->welcome.pixels);
+ FILE *large=fopen(image,"wb");assert(large);for(int i=0;i<PEARL_THEME_PIXELS+1;i++)fputc(0,large);fclose(large);pearl_theme_load(root,0);assert(!pearl_theme_current()->welcome.pixels);
  write_file(path,"version=2\n");pearl_theme_load(root,0);assert(!pearl_theme_current()->id[0]);
  write_file(path,"version=[broken");pearl_theme_load(root,0);assert(!pearl_theme_current()->id[0]);assert(strstr(pearl_theme_current()->welcome.heading,"Jonah"));
  FILE *f=fopen(path,"wb");assert(f);for(int i=0;i<9000;i++)fputc('x',f);fclose(f);pearl_theme_load(root,0);assert(!pearl_theme_current()->id[0]);

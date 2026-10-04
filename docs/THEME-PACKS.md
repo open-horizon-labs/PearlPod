@@ -37,3 +37,5 @@ The connected player was app-flashed with checksum verification. All eleven pack
 | Theme files disturb music sync/indexing | Retired | Theme files install outside managed catalog objects. Physical restart retains six albums and 91 tracks; existing sync cleanup only targets its managed object paths. |
 
 Review outcome: aligned with hybrid packs, no layout/skin engine or new network service added. Appearance preference changes require editing Person.toml and rebooting; a touchscreen pack picker is not included. Physical screen appearance and Listener’s subjective preference require human verification; production UI previews cover all eight scenes.
+
+A second app flash and boot selected Midnight’s second scene (`Ready, Listener?` / `See you soon, Listener!`), confirming persistent rotation across the two packs. The neutral UI was ready at 893 ms and the pack at 1,351 ms. Both images were loaded, playback remained ready and paused, WiFi was off and USB live. Permanent navigation/playback buttons are recolored alongside the dynamic content when the pack loads; layout and input behavior remain fixed.

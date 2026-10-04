@@ -59,7 +59,7 @@ int main(int argc,char **argv){assert(argc==2);lv_init();static lv_color_t draw[
  // Render both themes and both scene variants through the production lifecycle UI.
  for(unsigned seq=0;seq<4;seq++){
    reset_body();pearl_theme_load("theme-packs/Default",seq);pearl_ui_theme_ready();lifecycle_screen(false);shutting_down=true;
-   assert(strstr(lv_label_get_text(heading),"Listener"));
+   assert(strstr(lv_label_get_text(heading),"Listener"));assert(lv_color_to32(lv_obj_get_style_bg_color(back,0))==lv_color_to32(lv_color_hex(pearl_theme_current()->accent)));
    snprintf(path,sizeof(path),"%s/theme-%u-welcome.ppm",argv[1],seq);capture(path);
    lifecycle_screen(true);snprintf(path,sizeof(path),"%s/theme-%u-farewell.ppm",argv[1],seq);capture(path);
  }
