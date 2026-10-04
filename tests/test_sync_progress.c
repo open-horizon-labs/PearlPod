@@ -49,5 +49,8 @@ int main(void) {
   double steady=p.rate;
   for(unsigned n=11;n<=13;n++)pearl_progress_sample(&p,10000000,1000*n);
   assert(p.rate>steady*0.8);
+  /* A recent slow burst cannot erase the session's measured transfer rate. */
+  p.received=20000000;p.started_bytes=0;p.started_ms=0;p.rate=50000;p.last_data_ms=100000;
+  pearl_progress_view(&p,100000,&view);assert(strstr(view.timing,"9 min"));
   puts("Content progress, measured ETA, stalls, retries, invalid input and large totals pass.");
 }

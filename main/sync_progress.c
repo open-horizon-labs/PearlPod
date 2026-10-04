@@ -58,7 +58,7 @@ bool pearl_progress_update(pearl_transfer_progress *p, const pearl_transfer_info
       info->songs_done > info->songs_total || info->playlist_index > info->playlist_count) return false;
   /* A reconnect may restart the current file; published completed work never goes backwards. */
   if (p->known && (info->total_bytes != p->info.total_bytes || info->completed_bytes < p->info.completed_bytes)) return false;
-  if (!p->known) { p->started_ms=p->sample_ms=p->last_data_ms=now; p->sample_bytes=info->completed_bytes; }
+  if (!p->known) { p->started_ms=p->sample_ms=p->last_data_ms=now; p->sample_bytes=p->started_bytes=info->completed_bytes; }
   p->known=true; p->info=*info; p->received=info->completed_bytes;
   return true;
 }
@@ -102,7 +102,12 @@ void pearl_progress_view(const pearl_transfer_progress *p, uint32_t now, pearl_s
   else if (!p->sampled || (uint32_t)(now-p->started_ms)<5000 || p->rate<1)
     snprintf(out->timing,sizeof(out->timing),"Estimating time left...");
   else {
-    double seconds=(i->total_bytes-p->received)/p->rate;
+    uint32_t duration=now-p->started_ms;
+    double average=duration&&p->received>p->started_bytes?(double)(p->received-p->started_bytes)*1000/duration:0;
+    /* Include all file/control/SD pauses actually observed this session, while
+     * retaining some sensitivity to a sustained change in radio conditions. */
+    double rate=average>0?average*0.75+p->rate*0.25:p->rate;
+    double seconds=(i->total_bytes-p->received)/rate;
     if (seconds<60) snprintf(out->timing,sizeof(out->timing),"Sync: under a minute left");
     else if (seconds<3600) snprintf(out->timing,sizeof(out->timing),"Whole sync: about %.0f min left",ceil(seconds/60));
     else snprintf(out->timing,sizeof(out->timing),"Whole sync: about %.0f hr left",ceil(seconds/3600));

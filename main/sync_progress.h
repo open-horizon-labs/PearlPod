@@ -10,7 +10,7 @@ typedef struct {
 
 typedef struct {
   pearl_transfer_info info;
-  uint64_t received, sample_bytes;
+  uint64_t received, sample_bytes, started_bytes;
   uint32_t sample_ms, last_data_ms, started_ms;
   double rate;
   bool known, sampled;
