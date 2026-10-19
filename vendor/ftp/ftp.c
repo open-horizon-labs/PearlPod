@@ -382,7 +382,9 @@ static bool ftp_create_listening_socket (int32_t *sd, uint32_t port, uint8_t bac
 		// bind the socket to a port number
 		sServerAddress.sin_family = AF_INET;
 		sServerAddress.sin_addr.s_addr = INADDR_ANY;
+		#if !defined(PEARL_FTP_HOST) || defined(__APPLE__)
 		sServerAddress.sin_len = sizeof(sServerAddress);
+		#endif
 		sServerAddress.sin_port = htons(port);
 
 		result |= bind(_sd, (const struct sockaddr *)&sServerAddress, sizeof(sServerAddress));

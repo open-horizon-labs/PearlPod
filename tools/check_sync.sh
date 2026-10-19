@@ -17,7 +17,4 @@ cc -Wall -Wextra -Werror -fsanitize=address,undefined -include stdlib.h -I main 
 cc -DPEARL_FTP_HOST -Wall -Wextra -Werror -fsanitize=address,undefined -I vendor/ftp tests/test_async_writer.c vendor/ftp/async_writer.c -pthread -o /tmp/pearl-async-writer-tests
 /tmp/pearl-async-writer-tests
 /tmp/pearl-lyrics-tests
-.sync-venv/bin/python tests/test_syncer.py
-.sync-venv/bin/python tests/test_sync_progress.py
-.sync-venv/bin/python tests/test_exporter_automation.py
-.sync-venv/bin/python tests/test_syncer_deploy.py
+printf "%s\n" "Host service checks moved to media-prep-service/tools/check.sh; run them from that repository."
