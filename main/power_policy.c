@@ -1,25 +1,21 @@
 #include "power_policy.h"
+#include "device_power.h"
+#include "wifi_station.h"
 pearl_power_action pearl_power_decide(const pearl_power_input *in) {
-  if (!in)
-    return PEARL_POWER_ACTIVE;
-  uint32_t idle = in->now - in->last_activity,
-           paused = in->now - in->paused_since;
-  if (in->idle_timeout && idle >= in->idle_timeout &&
-      paused >= in->idle_timeout && !in->playing && !in->network && !in->busy &&
-      !in->usb_connected && in->button_released && in->deep_supported)
-    return PEARL_POWER_DEEP_SLEEP;
-  if (in->screen_timeout && idle >= in->screen_timeout && !in->screen_asleep &&
-      !in->usb_connected && in->button_released)
-    return PEARL_POWER_SCREEN_SLEEP;
-  return PEARL_POWER_ACTIVE;
+  if (!in) return PEARL_POWER_ACTIVE;
+  device_power_input policy = {
+    .now=in->now, .last_activity=in->last_activity, .paused_since=in->paused_since,
+    .screen_timeout=in->screen_timeout, .idle_timeout=in->idle_timeout,
+    .playing=in->playing, .screen_asleep=in->screen_asleep,
+    .inhibit_sleep=in->network, .busy=in->busy, .usb_connected=in->usb_connected,
+    .button_released=in->button_released, .deep_supported=in->deep_supported
+  };
+  return (pearl_power_action)device_power_decide(&policy);
 }
 bool pearl_usb_host_guard(bool connected, bool seen, uint32_t now,
                           uint32_t last_seen, uint32_t grace_ms) {
-  return connected || (seen && (uint32_t)(now - last_seen) <= grace_ms);
+  return device_usb_host_guard(connected, seen, now, last_seen, grace_ms);
 }
 unsigned pearl_wifi_retry_delay(unsigned attempt) {
-  if (attempt > 5)
-    attempt = 5;
-  unsigned delay = 1u << attempt;
-  return delay > 30 ? 30 : delay;
+  return wifi_station_retry_delay_ms(attempt, WIFI_STATION_RETRY_READER)/1000;
 }

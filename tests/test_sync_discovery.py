@@ -12,7 +12,7 @@ code=r'''
 #define ESP_OK 0
 #define ESP_IPADDR_TYPE_V4 4
 #define IPSTR "%u.%u.%u.%u"
-#define IP2STR(p) 192u,168u,1u,(p)->addr
+#define IP2STR(p) 192u,0u,2u,(p)->addr
 struct ip4 {unsigned addr;};
 typedef struct ip {struct {int type; union {struct ip4 ip4;}u_addr;}addr;struct ip *next;} mdns_ip_addr_t;
 typedef struct result {mdns_ip_addr_t *addr;struct result *next;unsigned port;}mdns_result_t;

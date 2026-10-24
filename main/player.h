@@ -16,7 +16,8 @@ void pearl_library_free(pearl_library *lib);
 int pearl_next(const pearl_library *lib,int current,int direction);
 int pearl_volume(int current,int delta,int ceiling);
 
-typedef struct { bool raw,stable,long_sent; uint32_t changed,pressed; } pearl_button;
+#include "device_input.h"
+typedef device_gesture pearl_button;
 typedef enum { BUTTON_NONE,BUTTON_SHORT,BUTTON_LONG } pearl_button_event;
 pearl_button_event pearl_button_update(pearl_button *b,bool pressed,uint32_t now);
 

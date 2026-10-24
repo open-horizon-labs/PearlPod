@@ -1,12 +1,7 @@
 #pragma once
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-/* Wildcard A reply, empty NOERROR for AAAA/HTTPS; rejects malformed questions. */
-int pearl_captive_dns_reply(const uint8_t *query, size_t size, uint8_t *reply, size_t capacity);
-#ifdef ESP_PLATFORM
-bool pearl_captive_dns_start(void);
-bool pearl_captive_dns_active(void);
-unsigned pearl_captive_dns_replies(void);
-bool pearl_captive_dns_stop(void);
-#endif
+#include "device_captive_dns.h"
+#define pearl_captive_dns_reply device_captive_dns_reply
+#define pearl_captive_dns_start device_captive_dns_start
+#define pearl_captive_dns_active device_captive_dns_active
+#define pearl_captive_dns_replies device_captive_dns_replies
+#define pearl_captive_dns_stop device_captive_dns_stop

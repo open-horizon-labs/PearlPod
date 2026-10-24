@@ -1,15 +1,12 @@
 #pragma once
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdint.h>
-typedef struct pearl_writer pearl_writer;
-pearl_writer *pearl_writer_create(unsigned capacity);
-bool pearl_writer_begin(pearl_writer *writer, FILE *file);
-void pearl_writer_backpressure(pearl_writer *writer);
-bool pearl_writer_failed(pearl_writer *writer);
-unsigned pearl_writer_space(pearl_writer *writer);
-bool pearl_writer_append(pearl_writer *writer,const void *data,unsigned size);
-/* Ownership of file transfers to the worker. Completion includes close/flush. */
-bool pearl_writer_finish(pearl_writer *writer,bool abort);
-bool pearl_writer_destroy(pearl_writer *writer);
-void pearl_writer_trace(pearl_writer *writer,char *out,unsigned size);
+#include "device_file_writer.h"
+typedef device_file_writer pearl_writer;
+#define pearl_writer_create device_file_writer_create
+#define pearl_writer_begin device_file_writer_begin
+#define pearl_writer_backpressure device_file_writer_backpressure
+#define pearl_writer_failed device_file_writer_failed
+#define pearl_writer_space device_file_writer_space
+#define pearl_writer_append device_file_writer_append
+#define pearl_writer_finish device_file_writer_finish
+#define pearl_writer_destroy device_file_writer_destroy
+#define pearl_writer_trace device_file_writer_trace

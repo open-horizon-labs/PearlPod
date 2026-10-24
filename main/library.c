@@ -9,14 +9,7 @@
 
 int pearl_volume(int current,int delta,int ceiling) { int n=current+delta;return n<0?0:n>ceiling?ceiling:n; }
 pearl_button_event pearl_button_update(pearl_button *b,bool pressed,uint32_t now) {
-    if(pressed!=b->raw){b->raw=pressed;b->changed=now;}
-    if(now-b->changed>=35 && b->stable!=b->raw){
-        b->stable=b->raw;
-        if(b->stable){b->pressed=now;b->long_sent=false;}
-        else if(!b->long_sent)return BUTTON_SHORT;
-    }
-    if(b->stable && !b->long_sent && now-b->pressed>=1800){b->long_sent=true;return BUTTON_LONG;}
-    return BUTTON_NONE;
+    return (pearl_button_event)device_gesture_update(b,pressed,now,35,1800);
 }
 #include "metadata.h"
 #include "managed.h"

@@ -1,3 +1,4 @@
+#include "device_image.h"
 #include "artwork.h"
 #include "player.h"
 #include "metadata.h"
@@ -49,12 +50,9 @@ uint8_t *pearl_art_pixels(const char *path){
     int w,h,c;uint8_t *rgb=stbi_load_from_memory(blob,n,&w,&h,&c,3);free(blob);
     if(!rgb||w<=0||h<=0){stbi_image_free(rgb);return NULL;}
     uint8_t *p=malloc(PEARL_ART_SIZE*PEARL_ART_SIZE*2);
-    if(p){int crop=w<h?w:h;int ox=(w-crop)/2,oy=(h-crop)/2;
-        for(int y=0;y<PEARL_ART_SIZE;y++)for(int x=0;x<PEARL_ART_SIZE;x++){
-            int at=((oy+y*crop/PEARL_ART_SIZE)*w+ox+x*crop/PEARL_ART_SIZE)*3;
-            uint16_t color=((rgb[at]>>3)<<11)|((rgb[at+1]>>2)<<5)|(rgb[at+2]>>3);unsigned out=(y*PEARL_ART_SIZE+x)*2;
-            p[out]=color>>8;p[out+1]=color;
-        }
+    if(p && !device_image_rgb565(rgb,(size_t)w*h*3,(unsigned)w,(unsigned)h,
+        p,PEARL_ART_SIZE*PEARL_ART_SIZE*2,PEARL_ART_SIZE,PEARL_ART_SIZE,DEVICE_IMAGE_CENTER_CROP)){
+        free(p);p=NULL;
     }
     stbi_image_free(rgb);return p;
 }

@@ -10,7 +10,7 @@ static void empty(const char *p){FILE *f=fopen(p,"wb");assert(f);fclose(f);}
 static void frame(FILE *f,const char *key,const char *text){size_t n=strlen(text)+1;unsigned char h[10]={0};memcpy(h,key,4);h[4]=n>>24;h[5]=n>>16;h[6]=n>>8;h[7]=n;fwrite(h,1,10,f);fputc(3,f);fwrite(text,1,n-1,f);}
 static void tag(const char *path,const char *title,const char *artist,const char *album,const char *track,const char *disc,const char *album_artist){FILE *f=fopen(path,"wb+");assert(f);unsigned char h[10]={'I','D','3',3};fwrite(h,1,10,f);frame(f,"TIT2",title);frame(f,"TPE1",artist);frame(f,"TALB",album);frame(f,"TRCK",track);frame(f,"TPOS",disc);frame(f,"TPE2",album_artist);long n=ftell(f)-10;h[6]=(n>>21)&127;h[7]=(n>>14)&127;h[8]=(n>>7)&127;h[9]=n&127;rewind(f);fwrite(h,1,10,f);fclose(f);}
 static unsigned find(const pearl_library *l,const char *name,pearl_view view){for(unsigned i=0;i<l->collection_count;i++)if(l->collections[i].kind==view&&!strcmp(l->collections[i].title,name))return i;assert(!"collection missing");return 0;}
-int main(void){char root[]="/tmp/pearl-catalog-XXXXXX";assert(mkdtemp(root));char path[1024],folder[1024];
+int main(void){char root[]="/tmp/pearl-catalog-XXXXXX";assert(mkdtemp(root));char path[2048],folder[1024];
  for(unsigned i=0;i<300;i++){snprintf(folder,sizeof(folder),"%s/folder%03u",root,i);assert(!mkdir(folder,0700));snprintf(path,sizeof(path),"%s/song.mp3",folder);empty(path);}
  snprintf(folder,sizeof(folder),"%s/Bulk",root);assert(!mkdir(folder,0700));for(unsigned i=0;i<2300;i++){snprintf(path,sizeof(path),"%s/%u.wav",folder,i);empty(path);}
  snprintf(folder,sizeof(folder),"%s",root);for(unsigned i=0;i<24;i++){strcat(folder,"/d");assert(!mkdir(folder,0700));}snprintf(path,sizeof(path),"%s/deep.flac",folder);empty(path);

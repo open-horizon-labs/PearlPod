@@ -1,0 +1,3 @@
+[submodule "shared/embedded-services"]
+	path = shared/embedded-services
+	url = https://github.com/open-horizon-labs/embedded-services.git

@@ -14,7 +14,7 @@ class TracerTests(unittest.TestCase):
         binary='/tmp/pearl-tracer-host'
         subprocess.run(['cc','-std=c11','-D_POSIX_C_SOURCE=200809L','-DPEARL_TRACER_HOST',
             '-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I','main','-I','tests/tracer_host',
-            'tests/test_tracer.c','main/tracer.c','-pthread','-o',binary],cwd=ROOT,check=True)
+            '-Ishared/embedded-services/components/device_diagnostics/include','tests/test_tracer.c','main/tracer.c','shared/embedded-services/components/device_diagnostics/device_diagnostics.c','-pthread','-o',binary],cwd=ROOT,check=True)
         output=subprocess.run([binary],check=True,text=True,capture_output=True).stdout
         states={};name=None
         for line in output.splitlines():

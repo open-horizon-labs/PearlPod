@@ -1,5 +1,6 @@
 /* Explicitly invoked diagnostics. Never writes card sectors directly. */
 #include "tracer.h"
+#include "device_diagnostics.h"
 #ifndef PEARL_TRACER_HOST
 #include "sync.h"
 #include "network.h"
@@ -27,41 +28,22 @@ static esp_err_t (*original_transaction)(int,sdmmc_command_t *);
 static atomic_bool enabled, sd_busy, cancelled, probe;
 static portMUX_TYPE mux=portMUX_INITIALIZER_UNLOCKED;
 typedef struct {uint64_t start;unsigned us,opcode,bytes,status;int result;} event;
-typedef struct {
- unsigned commands,reads,writes,statuses,busy_statuses,max_status_gap_us,errors,max_us,latency[8],sizes[8];
- uint64_t status_gap_us,record_us,read_bytes,write_bytes,command_us,read_us,write_us,status_us;
-} counters;
-static counters totals;
+typedef device_sd_counts counters;
+static device_sd_trace trace;
+#define totals trace.counts
+static uint64_t record_us;
 static event *events;
 static event slowest[16];
 static unsigned slow_count;
 static unsigned sequence;
-static int64_t started,last_end;
-static unsigned last_opcode;
-static unsigned bucket(unsigned value,const unsigned *limits){unsigned i=0;while(i<7&&value>limits[i])i++;return i;}
+static int64_t started;
 static esp_err_t transaction(int slot,sdmmc_command_t *cmd){
  if(!atomic_load(&enabled))return original_transaction(slot,cmd);
  int64_t start=esp_timer_get_time();esp_err_t result=original_transaction(slot,cmd);
  unsigned us=esp_timer_get_time()-start;
- static const unsigned latency[]={100,500,1000,5000,20000,100000,500000};
- static const unsigned sizes[]={512,1024,4096,8192,16384,32768,65536};
  portENTER_CRITICAL(&mux);
- totals.commands++;totals.command_us+=us;totals.errors+=result!=ESP_OK;
- if(us>totals.max_us)totals.max_us=us;
- totals.latency[bucket(us,latency)]++;
- if(cmd->datalen){totals.sizes[bucket(cmd->datalen,sizes)]++;
-  if(cmd->flags&SCF_CMD_READ){totals.reads++;totals.read_bytes+=cmd->datalen;totals.read_us+=us;}
-  else{totals.writes++;totals.write_bytes+=cmd->datalen;totals.write_us+=us;}
- }
- if(cmd->opcode==13){
-  totals.statuses++;totals.status_us+=us;
-  if(result==ESP_OK&&(!(cmd->response[0]&MMC_R1_READY_FOR_DATA)||MMC_R1_CURRENT_STATE(cmd->response)!=MMC_R1_CURRENT_STATE_TRAN))totals.busy_statuses++;
-  if(last_end&&(last_opcode==13||last_opcode==24||last_opcode==25)&&start>=last_end){
-   unsigned gap=start-last_end;totals.status_gap_us+=gap;
-   if(gap>totals.max_status_gap_us)totals.max_status_gap_us=gap;
-  }
- }
- last_end=start+us;last_opcode=cmd->opcode;
+ bool busy=result==ESP_OK&&(!(cmd->response[0]&MMC_R1_READY_FOR_DATA)||MMC_R1_CURRENT_STATE(cmd->response)!=MMC_R1_CURRENT_STATE_TRAN);
+ device_sd_record(&trace,start,us,cmd->opcode,cmd->datalen,(cmd->flags&SCF_CMD_READ)!=0,result==ESP_OK,busy);
  event current={.start=start,.us=us,.opcode=cmd->opcode,.bytes=cmd->datalen,.status=cmd->response[0],.result=result};
  events[sequence%EVENTS]=current;sequence++;
  if(slow_count<16)slowest[slow_count++]=current;
@@ -69,7 +51,7 @@ static esp_err_t transaction(int slot,sdmmc_command_t *cmd){
   unsigned least=0;for(unsigned i=1;i<16;i++)if(slowest[i].us<slowest[least].us)least=i;
   if(us>slowest[least].us)slowest[least]=current;
  }
- totals.record_us+=esp_timer_get_time()-start-us;
+ record_us+=esp_timer_get_time()-start-us;
  portEXIT_CRITICAL(&mux);
  return result;
 }
@@ -78,7 +60,7 @@ bool pearl_trace_start(void){
  if(!card||atomic_load(&sd_busy)||pearl_sync_busy())return false;
  if(!events)events=heap_caps_calloc(EVENTS,sizeof(event),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
  if(!events)return false;
- portENTER_CRITICAL(&mux);memset(&totals,0,sizeof(totals));sequence=slow_count=0;last_end=0;last_opcode=0;started=esp_timer_get_time();enabled=true;portEXIT_CRITICAL(&mux);
+ portENTER_CRITICAL(&mux);device_sd_reset(&trace);record_us=0;sequence=slow_count=0;started=esp_timer_get_time();enabled=true;portEXIT_CRITICAL(&mux);
  printf("PEARL tracer started version=1 event_capacity=%u event_bytes=%u\n",EVENTS,(unsigned)(EVENTS*sizeof(event)));return true;
 }
 void pearl_trace_stop(void){enabled=false;}
@@ -87,7 +69,7 @@ bool pearl_trace_ram_sink(void){return atomic_load(&probe);}
 bool pearl_trace_sd_busy(void){return atomic_load(&sd_busy);}
 void pearl_trace_cancel(void){cancelled=true;pearl_sync_cancel();}
 void pearl_trace_snapshot(void){
- counters c;unsigned seq;portENTER_CRITICAL(&mux);c=totals;seq=sequence;portEXIT_CRITICAL(&mux);
+ counters c;uint64_t overhead;unsigned seq;portENTER_CRITICAL(&mux);device_sd_snapshot(&trace,&c);overhead=record_us;seq=sequence;portEXIT_CRITICAL(&mux);
  printf("PEARL tracer {\"version\":1,\"enabled\":%d,\"sd_busy\":%d,\"probe\":%d,\"elapsed_us\":%"PRIi64",\"clock_khz\":%d,\"bus_width\":%d,\"sector_bytes\":%d,\"staging_bytes\":%u,\"chunk_sectors\":%u,\"tick_hz\":%d,\"internal_free\":%u,\"internal_min\":%u,\"internal_largest\":%u,\"psram_free\":%u,\"commands\":%u,\"reads\":%u,\"writes\":%u,\"status_commands\":%u,\"busy_statuses\":%u,\"status_gap_us\":%"PRIu64",\"max_status_gap_us\":%u,\"record_us\":%"PRIu64",\"errors\":%u,\"read_bytes\":%"PRIu64",\"write_bytes\":%"PRIu64",\"command_us\":%"PRIu64",\"read_us\":%"PRIu64",\"write_us\":%"PRIu64",\"status_us\":%"PRIu64",\"max_command_us\":%u,\"events_overwritten\":%u,\"latency_bins\":[%u,%u,%u,%u,%u,%u,%u,%u],\"size_bins\":[%u,%u,%u,%u,%u,%u,%u,%u]}\n",
  atomic_load(&enabled),atomic_load(&sd_busy),atomic_load(&probe),started?esp_timer_get_time()-started:0,
  card?card->real_freq_khz:0,card?(1<<card->log_bus_width):0,card?card->csd.sector_size:0,
@@ -95,7 +77,7 @@ void pearl_trace_snapshot(void){
  card?(unsigned)card->host.unaligned_multi_block_rw_max_chunk_size:0,CONFIG_FREERTOS_HZ,
  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
- c.commands,c.reads,c.writes,c.statuses,c.busy_statuses,c.status_gap_us,c.max_status_gap_us,c.record_us,c.errors,c.read_bytes,c.write_bytes,c.command_us,c.read_us,c.write_us,c.status_us,c.max_us,seq>EVENTS?seq-EVENTS:0,
+ c.commands,c.reads,c.writes,c.statuses,c.busy_statuses,c.status_gap_us,c.max_status_gap_us,overhead,c.errors,c.read_bytes,c.write_bytes,c.command_us,c.data_read_us,c.data_write_us,c.status_us,c.max_us,seq>EVENTS?seq-EVENTS:0,
  c.latency[0],c.latency[1],c.latency[2],c.latency[3],c.latency[4],c.latency[5],c.latency[6],c.latency[7],
  c.sizes[0],c.sizes[1],c.sizes[2],c.sizes[3],c.sizes[4],c.sizes[5],c.sizes[6],c.sizes[7]);
 }
@@ -173,7 +155,7 @@ static void sd_task(void *arg){
    counters after;
    portENTER_CRITICAL(&mux);after=totals;portEXIT_CRITICAL(&mux);
    printf("PEARL tracer_sd mode=%u internal_buffer=%d buffered_stdio=%d chunk_bytes=%u bytes=%u write_us=%u close_us=%u copy_us=%u yield_us=%u max_write_us=%u commands=%u command_write_us=%"PRIu64" command_status_us=%"PRIu64" cancelled=%d ok=%d\n",
-    mode,mode>=2,mode==0,chunks[mode],(unsigned)total,writes,close_us,copy_us,yield_us,longest,after.commands-before.commands,after.write_us-before.write_us,after.status_us-before.status_us,atomic_load(&cancelled),ok);
+    mode,mode>=2,mode==0,chunks[mode],(unsigned)total,writes,close_us,copy_us,yield_us,longest,after.commands-before.commands,after.data_write_us-before.data_write_us,after.status_us-before.status_us,atomic_load(&cancelled),ok);
    printf("PEARL tracer_sd_bins mode=%u latency=%u,%u,%u,%u,%u,%u,%u,%u sizes=%u,%u,%u,%u,%u,%u,%u,%u errors=%u\n",mode,
     after.latency[0]-before.latency[0],after.latency[1]-before.latency[1],after.latency[2]-before.latency[2],after.latency[3]-before.latency[3],
     after.latency[4]-before.latency[4],after.latency[5]-before.latency[5],after.latency[6]-before.latency[6],after.latency[7]-before.latency[7],
