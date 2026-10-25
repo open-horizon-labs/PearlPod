@@ -1,3 +1,4 @@
+#include "device_battery_ui.h"
 #include <errno.h>
 #include "replace.h"
 #include <stdio.h>
@@ -465,6 +466,8 @@ static void example_lvgl_unlock(void)
     xSemaphoreGive(lvgl_mux);
 }
 
+static void battery_wake(void) { atomic_store(&wake_requested,true); }
+
 static void example_lvgl_port_task(void *arg)
 {
     ESP_LOGI(TAG, "Starting LVGL task");
@@ -472,6 +475,7 @@ static void example_lvgl_port_task(void *arg)
     while (1) {
         // Lock the mutex due to the LVGL APIs are not thread-safe
         if (example_lvgl_lock(-1)) {
+            device_battery_ui_poll((uint32_t)(esp_timer_get_time()/1000));
             task_delay_ms = lv_timer_handler();
             // Release the mutex
             example_lvgl_unlock();
@@ -656,6 +660,8 @@ void app_main(void)
     if (example_lvgl_lock(-1)) {
 
         pearl_ui_start();
+        // Manufacturer CS43131 1.3.2 config uses equal 10k battery resistors.
+        device_battery_ui_init(ADC_CHANNEL_0,2,1,battery_wake);
         // Present the welcome frame before even a very fast card scan can
         // replace it. No splash timer or minimum startup dwell.
         lv_refr_now(NULL);
