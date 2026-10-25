@@ -22,3 +22,7 @@ Clean firmware code revision: `5fe06e3` (`v0.3.1-23-g5fe06e3`), ESP-IDF v5.5.5 w
 | `dist/pearl-player-merged.bin` | 1,965,184 | `15db5d0da073bec350a971f33c03bb0312a7807e4937f7e294e81747a4f2d43a` |
 
 Artifacts stay local and ignored. This evidence-only documentation update follows the clean code build. No flash, audible output, release or deployment occurred.
+
+## Connected-device installation — October 25, 2026
+
+Firmware `85a5a59` was installed app-only and passed paused USB checks on the CS43131 PearlPod. The device accepted volume 100, clamped a request for 101 to 100, and clamped −1 to mute at 0; its original volume 63 was restored afterward. Selected track and playback time stayed unchanged and paused. This verifies the installed command range and preserved settings, not measured headphone voltage/power or listening quality. No audible output was requested. Exact image and device evidence are recorded in [VERIFICATION.md](VERIFICATION.md).

@@ -45,3 +45,15 @@ The clean maintained-firmware revision `92dad109aaca6da370f9e02e8bcdee9ea3bfbf99
 
 - Application: `dist/pearl-player.bin`, 1,851,120 bytes; SHA-256 `a63c0e5743f86f3bee1b05080cbd7eca59a900a9ce0db2811f35d2b041d44229`.
 - Merged image: `dist/pearl-player-merged.bin`, 1,916,656 bytes; SHA-256 `97b9041fa0b81307b1b0d84853ada2584359d8f4fd92e44db3e6c0074605c721`.
+
+## Connected PearlPod installation — October 25, 2026
+
+Installed maintained firmware `85a5a59` (`v0.3.1-24-g85a5a59`) on the connected CS43131 PearlPod, USB identity `14:C1:9F:3A:A1:C8`, through the laptop bridge. ESP-IDF 5.5.5 build, `tools/check.sh` and `tools/check_media.sh` passed before installation. The latter covers real production media commands, interrupted HTTP Range/If-Range recovery, validators, full-card/cancellation/catalog activation and silent MP3 seek/restart.
+
+Read and compared the device partition table before writing: it exactly matches the built table, with NVS at `0x9000` and the 6 MiB factory application at `0x10000`. Only the application was written, at `0x10000`; no bootloader, partition table, NVS or card image was written. Esptool verified the written data hash. App binary: 1,899,648 bytes, SHA-256 `761b5e0f180bfbd4566ca1129acc139d24784b0a9ef5b91c96750422222910e6`; embedded ELF identity `7ddff36b8f6c5b709e4fa0b35e7d5fda68dba68a301f35863fdad2bde9722298` matched the built ELF.
+
+Post-flash USB checks report ready=1, paused=1, track=13, volume=63, seconds=0 and no playback error, matching the pre-flash selection/volume. The mounted card exposes 91 tracks and six albums. Collection counts are six album, two artist, six folder and five playlist groups; this is existing music content, not evidence of a populated podcast/audiobook collection. Stable follow-up checks preserve the same playback state. Internal free memory was 134,239 bytes with a 53,248-byte largest block and 7,994,464 bytes free PSRAM at the sampled idle point.
+
+While paused, USB requests verified the upper volume clamp (101→100) and lower clamp (−1→0), then restored volume 63 and the identical selected-track/paused/time state. No Play, audible probe, format, sync download or user media deletion was performed. Actual output voltage/power, listening quality, new touchscreen/hold behavior and long-form content acceptance remain unverified.
+
+The firmware prefers the new shared resumable HTTP catalog, but the live NAS `/media-library/v1/catalog?device=pearlpod` endpoint returned HTTP 404 during the connected session. Consequently the automatic client would use its legacy FTP fallback on that host. The existing shared host service and the new HTTP delivery contract are separate rollout checkpoints: this installation alone does not activate the undeployed catalog/object endpoints or establish physical HTTP sync. No host upgrade was performed in this session.
