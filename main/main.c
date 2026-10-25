@@ -158,7 +158,7 @@ HIFI版本所有IO
 #define EXAMPLE_LCD_BK_LIGHT_OFF_LEVEL !EXAMPLE_LCD_BK_LIGHT_ON_LEVEL
 // 鱼鹰光电屏幕验证底板
 #define EXAMPLE_PIN_NUM_LCD_CS            (GPIO_NUM_8)
-#define EXAMPLE_PIN_NUM_LCD_PCLK          (GPIO_NUM_9) 
+#define EXAMPLE_PIN_NUM_LCD_PCLK          (GPIO_NUM_9)
 #define EXAMPLE_PIN_NUM_LCD_DATA0         (GPIO_NUM_10)
 #define EXAMPLE_PIN_NUM_LCD_DATA1         (GPIO_NUM_11)
 #define EXAMPLE_PIN_NUM_LCD_DATA2         (GPIO_NUM_12)
@@ -349,7 +349,7 @@ HIFI版本所有IO
 
 #elif TOUCH_IC_CONFIG == CST820_ID
 #include "esp_lcd_touch_cst820.h"
-#define TOUCH_IO_I2C_CONFIG    ESP_LCD_TOUCH_IO_I2C_CST820_CONFIG  
+#define TOUCH_IO_I2C_CONFIG    ESP_LCD_TOUCH_IO_I2C_CST820_CONFIG
 #define esp_lcd_touch_new_i2c  esp_lcd_touch_new_i2c_cst820
 
 #elif TOUCH_IC_CONFIG == CHSC6417_ID
@@ -438,7 +438,7 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
         data->point.x = tp_x;
         data->point.y = tp_y;
         data->state = LV_INDEV_STATE_PRESSED;
-        
+
     } else {
         consume_wake_touch=false;
         data->state = LV_INDEV_STATE_RELEASED;
@@ -536,11 +536,13 @@ static void wake_hold_finish(esp_timer_handle_t monitor){
 
 void app_main(void)
 {
-    bool button_wake=esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0;
+    // A held power button can also accompany a power-on/USB reset.
+    rtc_gpio_deinit(CONFIG_PEARL_BUTTON_UP);
+    gpio_set_direction(CONFIG_PEARL_BUTTON_UP,GPIO_MODE_INPUT);gpio_pullup_en(CONFIG_PEARL_BUTTON_UP);
+    bool button_wake=esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0 ||
+                     !gpio_get_level(CONFIG_PEARL_BUTTON_UP);
     esp_timer_handle_t wake_monitor=NULL;
     if(button_wake){
-        rtc_gpio_deinit(CONFIG_PEARL_BUTTON_UP);
-        gpio_set_direction(CONFIG_PEARL_BUTTON_UP,GPIO_MODE_INPUT);gpio_pullup_en(CONFIG_PEARL_BUTTON_UP);
         wake_started=esp_timer_get_time();atomic_store(&wake_released,false);
         wake_button_sample(NULL);
         const esp_timer_create_args_t monitor={.callback=wake_button_sample,.name="wake_hold"};
@@ -598,6 +600,49 @@ void app_main(void)
     // 设置屏幕亮度
     ESP_ERROR_CHECK(panel_qspi_amoled_set_brightness(panel_handle, CONFIG_PEARL_BRIGHTNESS)); // 设置亮度为 15
 
+
+
+    ESP_LOGI(TAG, "Initialize LVGL library");
+    lv_init();
+    // alloc draw buffers used by LVGL
+    // it's recommended to choose the size of the draw buffer(s) to be at least 1/10 screen sized
+    lv_color_t *buf1 = heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA);
+    assert(buf1);
+    lv_color_t *buf2 = heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA);
+    assert(buf2);
+    // initialize LVGL draw buffers
+    lv_disp_draw_buf_init(&disp_buf, buf1, buf2, EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT);
+
+    ESP_LOGI(TAG, "Register display driver to LVGL");
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = EXAMPLE_LCD_H_RES;
+    disp_drv.ver_res = EXAMPLE_LCD_V_RES;
+    disp_drv.flush_cb = example_lvgl_flush_cb;
+    disp_drv.rounder_cb = example_lvgl_rounder_cb;
+    disp_drv.draw_buf = &disp_buf;
+    disp_drv.user_data = panel_handle;
+
+    // 设置旋转角度
+    // disp_drv.rotated = LV_DISP_ROT_90; // 旋转90度
+
+    lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
+
+    ESP_LOGI(TAG, "Install LVGL tick timer");
+    // Tick interface for LVGL (using esp_timer to generate 2ms periodic event)
+    const esp_timer_create_args_t lvgl_tick_timer_args = {
+        .callback = &example_increase_lvgl_tick,
+        .name = "lvgl_tick"
+    };
+    esp_timer_handle_t lvgl_tick_timer = NULL;
+    ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000));
+
+    ESP_LOGI("pearl","Wake hint requested=%d display_ready_ms=%lld",button_wake,
+             (esp_timer_get_time()-wake_started)/1000);
+    if(button_wake)wake_hold_finish(wake_monitor);
+    // Keep the DAC's sleep reset hold until the wake gesture is accepted.
+    gpio_deep_sleep_hold_dis();gpio_hold_dis(GPIO_NUM_41);
+
 #if EXAMPLE_USE_TOUCH
     ESP_LOGI(TAG, "Initialize I2C bus");
     const i2c_config_t i2c_conf = {
@@ -642,45 +687,6 @@ void app_main(void)
     // ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_cst820(tp_io_handle, &tp_cfg, &tp));
     ESP_ERROR_CHECK(esp_lcd_touch_new_i2c(tp_io_handle, &tp_cfg, &tp));
 #endif
-
-    ESP_LOGI(TAG, "Initialize LVGL library");
-    lv_init();
-    // alloc draw buffers used by LVGL
-    // it's recommended to choose the size of the draw buffer(s) to be at least 1/10 screen sized
-    lv_color_t *buf1 = heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA);
-    assert(buf1);
-    lv_color_t *buf2 = heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA);
-    assert(buf2);
-    // initialize LVGL draw buffers
-    lv_disp_draw_buf_init(&disp_buf, buf1, buf2, EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT);
-
-    ESP_LOGI(TAG, "Register display driver to LVGL");
-    lv_disp_drv_init(&disp_drv);
-    disp_drv.hor_res = EXAMPLE_LCD_H_RES;
-    disp_drv.ver_res = EXAMPLE_LCD_V_RES;
-    disp_drv.flush_cb = example_lvgl_flush_cb;
-    disp_drv.rounder_cb = example_lvgl_rounder_cb;
-    disp_drv.draw_buf = &disp_buf;
-    disp_drv.user_data = panel_handle;
-
-    // 设置旋转角度
-    // disp_drv.rotated = LV_DISP_ROT_90; // 旋转90度
-    
-    lv_disp_t *disp = lv_disp_drv_register(&disp_drv);
-
-    ESP_LOGI(TAG, "Install LVGL tick timer");
-    // Tick interface for LVGL (using esp_timer to generate 2ms periodic event)
-    const esp_timer_create_args_t lvgl_tick_timer_args = {
-        .callback = &example_increase_lvgl_tick,
-        .name = "lvgl_tick"
-    };
-    esp_timer_handle_t lvgl_tick_timer = NULL;
-    ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000));
-
-    if(button_wake)wake_hold_finish(wake_monitor);
-    // Keep the DAC's sleep reset hold until the wake gesture is accepted.
-    gpio_deep_sleep_hold_dis();gpio_hold_dis(GPIO_NUM_41);
 
 
 #if EXAMPLE_USE_TOUCH

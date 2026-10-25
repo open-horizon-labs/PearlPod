@@ -59,3 +59,8 @@ app=s[s.index('void app_main(void)'):]
 gate=app.index('if(button_wake)wake_hold_finish(wake_monitor);')
 assert gate<app.index('xTaskCreate(example_lvgl_port_task')
 assert gate<app.index('gpio_deep_sleep_hold_dis()')
+
+# A held button must route through the hint even after a power-on reset.
+assert '!gpio_get_level(CONFIG_PEARL_BUTTON_UP);' in app[:app.index('esp_timer_handle_t wake_monitor')]
+# Paint before the touch controller's two 200ms reset delays.
+assert gate<app.index('esp_lcd_touch_new_i2c(')
