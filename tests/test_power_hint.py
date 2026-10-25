@@ -10,6 +10,7 @@ subprocess.run(['cmake','--build',str(build),'--target','lvgl','-j','8'],check=T
 code=r'''
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include "power_hint.c"
 static unsigned char pixels[460*460*4];
 static void flush(lv_disp_drv_t *d,const lv_area_t *a,lv_color_t *c){
@@ -23,7 +24,13 @@ int main(void){
  lv_init();static lv_color_t buffer[460*10];lv_disp_draw_buf_t draw;
  lv_disp_draw_buf_init(&draw,buffer,NULL,460*10);lv_disp_drv_t d;lv_disp_drv_init(&d);
  d.hor_res=460;d.ver_res=460;d.draw_buf=&draw;d.flush_cb=flush;lv_disp_drv_register(&d);
+ pearl_power_hint_wake(40);assert(lv_bar_get_value(bar)==40);
+ assert(strstr(lv_label_get_text(label),"to turn on"));
+ step(3100);assert(!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN));
+ lv_refr_now(NULL);FILE *wake_file=fopen("wake.rgba","wb");assert(wake_file);
+ assert(fwrite(pixels,1,sizeof(pixels),wake_file)==sizeof(pixels));fclose(wake_file);
  pearl_power_hint_hide();pearl_power_hint_update(false,0);
+ assert(strstr(lv_label_get_text(label),"turn off"));
  assert(!lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN)&&lv_bar_get_value(bar)==0);
  step(3100);assert(lv_obj_has_flag(panel,LV_OBJ_FLAG_HIDDEN));
  pearl_power_hint_update(true,50);step(8100);
@@ -47,4 +54,5 @@ with tempfile.TemporaryDirectory() as tmp:
  subprocess.run(['cc','-std=c17','-Wall','-Wextra','-Werror',*flags.split(),'-I',str(root/'main'),'-I',str(lvgl),str(src),str(build/'lib/liblvgl.a'),'-lm','-o',str(binary)],check=True)
  subprocess.run([str(binary)],check=True,cwd=tmp)
  (root/'dist').mkdir(exist_ok=True)
+ subprocess.run(['ffmpeg','-v','error','-y','-f','rawvideo','-pixel_format','rgba','-video_size','460x460','-i',str(tmp/'wake.rgba'),'-frames:v','1',str(root/'dist/power-wake.png')],check=True)
  subprocess.run(['ffmpeg','-v','error','-y','-f','rawvideo','-pixel_format','rgba','-video_size','460x460','-i',str(tmp/'hold.rgba'),'-frames:v','1',str(root/'dist/power-hold.png')],check=True)

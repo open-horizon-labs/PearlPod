@@ -44,3 +44,5 @@ cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_media.c
 /tmp/pearl-media-tests
 
 python3 tests/test_power_hint.py
+
+python3 tests/test_wake_hold.py

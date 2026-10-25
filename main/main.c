@@ -503,14 +503,50 @@ void pearl_sd_bench(void){
 static void library_task(void *arg);
 static void buttons_task(void *arg);
 
+// Latch an early release even while the display is being initialized.
+static atomic_bool wake_released;
+static int64_t wake_started;
+static void wake_button_sample(void *arg){
+    (void)arg;
+    if(esp_timer_get_time()-wake_started < PEARL_BUTTON_HOLD_MS*1000LL &&
+       gpio_get_level(CONFIG_PEARL_BUTTON_UP))atomic_store(&wake_released,true);
+}
+static void wake_hold_finish(esp_timer_handle_t monitor){
+    lv_obj_set_style_bg_color(lv_scr_act(),lv_color_hex(0x101827),0);
+    for(;;){
+        wake_button_sample(NULL);
+        if(atomic_load(&wake_released))break;
+        unsigned elapsed=(unsigned)((esp_timer_get_time()-wake_started)/1000);
+        pearl_power_hint_wake(elapsed>=PEARL_BUTTON_HOLD_MS?100:elapsed*100/PEARL_BUTTON_HOLD_MS);
+        lv_timer_handler();lv_refr_now(NULL);
+        if(elapsed>=PEARL_BUTTON_HOLD_MS)break;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    ESP_ERROR_CHECK(esp_timer_stop(monitor));ESP_ERROR_CHECK(esp_timer_delete(monitor));
+    if(atomic_load(&wake_released)){
+        pearl_power_hint_hide();
+        // No card scan, network, decoder or audio startup on a cancelled wake.
+        esp_lcd_panel_disp_on_off(player_panel,false);panel_qspi_amoled_sleep(player_panel,true);
+        ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(CONFIG_PEARL_BUTTON_UP,0));
+        rtc_gpio_pullup_en(CONFIG_PEARL_BUTTON_UP);rtc_gpio_pulldown_dis(CONFIG_PEARL_BUTTON_UP);
+        esp_deep_sleep_start();
+    }
+    pearl_power_hint_hide();
+}
+
 void app_main(void)
 {
-    if(esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0){
-        rtc_gpio_deinit(CONFIG_PEARL_BUTTON_UP);gpio_set_direction(CONFIG_PEARL_BUTTON_UP,GPIO_MODE_INPUT);gpio_pullup_en(CONFIG_PEARL_BUTTON_UP);
-        int64_t pressed=esp_timer_get_time();while(!gpio_get_level(CONFIG_PEARL_BUTTON_UP)&&esp_timer_get_time()-pressed<1800000)vTaskDelay(pdMS_TO_TICKS(20));
-        if(gpio_get_level(CONFIG_PEARL_BUTTON_UP)){esp_sleep_enable_ext0_wakeup(CONFIG_PEARL_BUTTON_UP,0);rtc_gpio_pullup_en(CONFIG_PEARL_BUTTON_UP);rtc_gpio_pulldown_dis(CONFIG_PEARL_BUTTON_UP);esp_deep_sleep_start();}
+    bool button_wake=esp_sleep_get_wakeup_cause()==ESP_SLEEP_WAKEUP_EXT0;
+    esp_timer_handle_t wake_monitor=NULL;
+    if(button_wake){
+        rtc_gpio_deinit(CONFIG_PEARL_BUTTON_UP);
+        gpio_set_direction(CONFIG_PEARL_BUTTON_UP,GPIO_MODE_INPUT);gpio_pullup_en(CONFIG_PEARL_BUTTON_UP);
+        wake_started=esp_timer_get_time();atomic_store(&wake_released,false);
+        wake_button_sample(NULL);
+        const esp_timer_create_args_t monitor={.callback=wake_button_sample,.name="wake_hold"};
+        ESP_ERROR_CHECK(esp_timer_create(&monitor,&wake_monitor));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(wake_monitor,20000));
     }
-    gpio_deep_sleep_hold_dis();gpio_hold_dis(GPIO_NUM_41);
     pearl_power_activity();
     library_access=xSemaphoreCreateMutex();
     esp_err_t nvs_err=nvs_flash_init();
@@ -641,6 +677,11 @@ void app_main(void)
     esp_timer_handle_t lvgl_tick_timer = NULL;
     ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
     ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, EXAMPLE_LVGL_TICK_PERIOD_MS * 1000));
+
+    if(button_wake)wake_hold_finish(wake_monitor);
+    // Keep the DAC's sleep reset hold until the wake gesture is accepted.
+    gpio_deep_sleep_hold_dis();gpio_hold_dis(GPIO_NUM_41);
+
 
 #if EXAMPLE_USE_TOUCH
     static lv_indev_drv_t indev_drv;    // Input device driver (Touch)
