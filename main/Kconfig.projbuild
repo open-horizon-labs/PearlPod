@@ -7,10 +7,14 @@ config PEARL_BUTTON_DOWN
     int "Volume-down / screen lock GPIO"
     range 0 48
     default 48
-config PEARL_MAX_VOLUME
-    int "Maximum software volume (percent)"
-    range 1 100
-    default 65
+config PEARL_HIGH_IMPEDANCE_OUTPUT
+    bool "2 Vrms output for headphones of at least 600 ohms"
+    default n
+    help
+        Enables the CS43131 high-voltage full-scale mode. Requires headphones
+        of at least 600 ohms and a DAC VP supply of at least 3.3 V. Leave off
+        for ordinary headphones: their maximum supported range is 1.41 Vrms.
+        Both modes use 0 dB DAC volume and unity PCM gain at volume 100.
 endmenu
 
 menu "Listener power management"

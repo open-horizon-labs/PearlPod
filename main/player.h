@@ -1,6 +1,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
+#include "audio_volume.h"
 #include "media_library.h"
 #define PEARL_PATH 512
 #define PEARL_NAME 160

@@ -4,6 +4,7 @@ cd "$(dirname "$0")/.."
 shared=shared/embedded-services/components
 export C_INCLUDE_PATH="${C_INCLUDE_PATH:+$C_INCLUDE_PATH:}$PWD/$shared/device_input/include:$PWD/$shared/device_image/include:$PWD/$shared/device_power/include:$PWD/$shared/wifi_station/include:$PWD/$shared/wifi_profiles/include:$PWD/$shared/wifi_provisioning/include:$PWD/$shared/tomlc17/include"
 . tools/host_media.sh
+python3 tests/test_volume.py
 cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_library.c main/library.c main/metadata.c main/playlist.c "$shared/device_input/device_input.c" $media_link -lm -o /tmp/pearl-library-tests
 /tmp/pearl-library-tests
 cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main -I vendor tests/test_artwork.c main/artwork.c main/metadata.c "$shared/device_image/device_image.c" -lm -o /tmp/pearl-art-tests

@@ -11,7 +11,6 @@ code=r'''
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
-#define CONFIG_PEARL_MAX_VOLUME 70
 #define portMAX_DELAY 0
 #define ESP_OK 0
 static pearl_library *library,*pending_library;
@@ -47,6 +46,9 @@ int main(void){pearl_track tracks[5]={0};pearl_library l={.tracks=tracks,.track_
  command_apply((command){.kind=PLAY,.value=4});assert(!state.spoken&&!state.milliseconds);
  command_apply((command){.kind=PLAY,.value=3});assert(state.track==4);
  state.track=-1;state.paused=true;command_apply((command){.kind=TOGGLE});assert(state.track>=0&&state.track!=3);
+ state.volume=65;command_apply((command){.kind=VOLUME,.value=35});assert(state.volume==100);
+ command_apply((command){.kind=VOLUME,.value=2});assert(state.volume==100);
+ command_apply((command){.kind=VOLUME,.value=-102});assert(state.volume==0);
  save_ok=false;int track=state.track;command_apply((command){.kind=PLAY,.value=2});assert(state.track==track);
  puts("Production commands: boot paused, per-item resume, music fresh, split seek, chapters, completion restart, orphan rejection, failed-save guard pass");}
 '''

@@ -25,6 +25,7 @@
 #define DR_FLAC_NO_SIMD
 #include "dr_flac.h"
 #include "codec_flac.h"
+#include "audio_volume.h"
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
 
@@ -78,8 +79,12 @@ static esp_err_t dac_init(void){
         {0x40014,31},{0x40015,0},{0x40016,63},{0x40017,0},
         {0x40018,0x0c},{0x40019,0x0a},{0x50000,0},{0x50001,0},
         {0x5000a,7},{0x5000b,15},{0x90000,2},
-        {0x90001,32},{0x90002,32},{0x90003,0xec},{0x90004,0},
-        {0xb0000,0x16},{0x80000,0x10}, // lower full-scale output; software ceiling remains independent
+        {0x90001,0},{0x90002,0},{0x90003,0xec},{0x90004,0}, // unity PCM volume
+#if CONFIG_PEARL_HIGH_IMPEDANCE_OUTPUT
+        {0xb0000,0x1e},{0x80000,0x31}, // 2 Vrms, >=600 ohm loads and VP >=3.3 V only
+#else
+        {0xb0000,0x1c},{0x80000,0x20}, // 1.41 Vrms, full headphone load range
+#endif
     };
     for(unsigned i=0;i<sizeof(regs)/sizeof(regs[0]);i++){esp_err_t e=cs_write(regs[i].r,regs[i].v);if(e)return e;}
     uint8_t status=0;int tries=30;
@@ -149,7 +154,7 @@ static void command_apply(command c){
     else if(c.kind==SEEK){int64_t target=(int64_t)s.milliseconds+(int64_t)c.value*1000;seek_position(&s,target<0?0:target>UINT32_MAX?UINT32_MAX:(uint32_t)target);}
     else if(c.kind==SEEK_TO)seek_position(&s,(uint32_t)c.value);
     else if(c.kind==CHAPTER){const media_item *item=pearl_media_item(library,s.track);if(item&&c.value>=0&&(unsigned)c.value<item->chapter_count)seek_position(&s,item->chapters[c.value].start_ms);}
-    else if(c.kind==VOLUME)s.volume=pearl_volume(s.volume,c.value,CONFIG_PEARL_MAX_VOLUME);
+    else if(c.kind==VOLUME)s.volume=pearl_volume(s.volume,c.value,PEARL_VOLUME_MAX);
     else if(c.kind==STOP){s.paused=true;stopping=true;}
     publish(s);
     if(c.kind==TOGGLE||c.kind==SEEK||c.kind==SEEK_TO||c.kind==CHAPTER||c.kind==STOP)save();
@@ -167,14 +172,14 @@ static uint32_t timeline_start;
 static bool emit(const int16_t *samples,size_t frames,unsigned channels,unsigned rate,int current){
     if(!rate||rate>192000||!channels||channels>2){error("Unsupported audio format");return false;}
     pearl_state initial=pearl_audio_state();
-    float gain=initial.volume?powf(10.f,(-60.f+0.75f*initial.volume)/20.f):0.f;
+    float gain=pearl_volume_gain(initial.volume);
     size_t used=0;double step=(double)rate/48000.0;
     for(size_t i=0;i<frames;i++){
         int16_t l=samples[i*channels],r=channels==2?samples[i*channels+1]:l;
         if(!have_previous){previous[0]=l;previous[1]=r;have_previous=true;}
         while(phase<1.0){
-            output[used++]=(int32_t)((previous[0]+(l-previous[0])*phase)*gain)*65536;
-            output[used++]=(int32_t)((previous[1]+(r-previous[1])*phase)*gain)*65536;
+            output[used++]=pearl_volume_slot(previous[0]+(l-previous[0])*phase,gain);
+            output[used++]=pearl_volume_slot(previous[1]+(r-previous[1])*phase,gain);
             phase+=step;frames_written++;
             if(used==4096){size_t bytes=0;if(i2s_channel_write(tx,output,used*sizeof(*output),&bytes,1000)!=ESP_OK||bytes!=used*sizeof(*output)){error("Audio output interrupted");return false;}used=0;if(!service(current))return false;}
         }
@@ -237,7 +242,7 @@ static bool decode(const char *path,int current){
     mp3dec_ex_close(decoder);free(decoder);fclose(f);return eof;
 }
 static void task(void *arg){
-    if(nvs_open("pearl",NVS_READWRITE,&prefs)==ESP_OK){prefs_open=true;int32_t v;pearl_state s=pearl_audio_state();if(nvs_get_i32(prefs,"volume",&v)==ESP_OK)s.volume=pearl_volume(v,0,CONFIG_PEARL_MAX_VOLUME);char p[PEARL_PATH];size_t n=sizeof(p);if(nvs_get_str(prefs,"track",p,&n)==ESP_OK)for(unsigned i=0;i<library->track_count;i++)if(pearl_track_playable(library,i)&&!strcmp(p,library->tracks[i].path)){select_position(&s,i,true,false);break;}publish(s);}
+    if(nvs_open("pearl",NVS_READWRITE,&prefs)==ESP_OK){prefs_open=true;int32_t v;pearl_state s=pearl_audio_state();if(nvs_get_i32(prefs,"volume",&v)==ESP_OK)s.volume=pearl_volume(v,0,PEARL_VOLUME_MAX);char p[PEARL_PATH];size_t n=sizeof(p);if(nvs_get_str(prefs,"track",p,&n)==ESP_OK)for(unsigned i=0;i<library->track_count;i++)if(pearl_track_playable(library,i)&&!strcmp(p,library->tracks[i].path)){select_position(&s,i,true,false);break;}publish(s);}
     preferences_running=true;
     if(xTaskCreate(preference_task,"preferences",6144,NULL,1,NULL)!=pdPASS)preferences_running=false;
     esp_err_t e=dac_init();if(e){error("Audio hardware not ready. Check the board variant.");goto stopped;}

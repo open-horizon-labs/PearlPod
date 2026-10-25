@@ -116,7 +116,7 @@ tools/build.sh
 tools/flash.sh /dev/cu.usbmodemDEVICE
 ```
 
-Binaries belong in [GitHub releases](https://github.com/open-horizon-labs/pearlpod-releases/releases). `tools/fetch-firmware.sh` downloads them with GitHub CLI. The merged image flashes at offset zero; packaged checksums identify each artifact. Button GPIOs and the volume cap are configurable through menuconfig.
+Binaries belong in [GitHub releases](https://github.com/open-horizon-labs/pearlpod-releases/releases). `tools/fetch-firmware.sh` downloads them with GitHub CLI. The merged image flashes at offset zero; packaged checksums identify each artifact. Button GPIOs are configurable through menuconfig. Volume runs from mute at 0 to full digital level at 100; see [DAC output modes](docs/VOLUME.md).
 
 See [hardware evidence](docs/HARDWARE.md), [verification](docs/VERIFICATION.md) and [design](DESIGN.md). `tools/render_ui.sh /tmp/pearl-ui-check` renders the production LVGL interface with fixture music after IDF has fetched managed components. To capture your own card pack, set `PEARL_PREVIEW_PACK=/path/to/pack` and `PEARL_PUBLIC_FIXTURES=1` when running it; the pack directory must contain `Person.toml` and `Themes/`. The optional captures include welcome, farewell, browsing, playback, lyrics and sync for four scene selections.
 
