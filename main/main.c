@@ -1,3 +1,4 @@
+#include "power_hint.h"
 #include "device_battery_ui.h"
 #include <errno.h>
 #include "replace.h"
@@ -758,6 +759,7 @@ static void buttons_task(void *arg)
     gpio_config_t cfg={.pin_bit_mask=(1ULL<<up)|(1ULL<<down),.mode=GPIO_MODE_INPUT,.pull_up_en=GPIO_PULLUP_ENABLE};gpio_config(&cfg);
     pearl_button ub={0},db={0};
     uint32_t paused_since=esp_timer_get_time()/1000;bool was_playing=false;
+    bool was_minus_held=false;
     // Don't interpret a held boot/power button as a second shutdown request.
     while(!gpio_get_level(up))vTaskDelay(pdMS_TO_TICKS(20));
     while(1){
@@ -765,6 +767,17 @@ static void buttons_task(void *arg)
         if(atomic_exchange(&wake_requested,false)){display_sleep(false,false);pearl_power_activity();}
         pearl_button_event u=pearl_button_update(&ub,!gpio_get_level(up),now),d=pearl_button_update(&db,!gpio_get_level(down),now);
         if(u!=BUTTON_NONE||d!=BUTTON_NONE){pearl_power_activity();if(screen_locked&&!screen_manual)display_sleep(false,false);}
+        bool minus_held=ub.stable&&!ub.long_sent;
+        if(minus_held&&!was_minus_held){pearl_power_activity();if(screen_locked)display_sleep(false,false);}
+        if(minus_held||was_minus_held||u==BUTTON_SHORT){
+            unsigned percent=minus_held?(uint32_t)(now-ub.pressed)*100/PEARL_BUTTON_HOLD_MS:0;
+            if(example_lvgl_lock(-1)){
+                if(u==BUTTON_LONG)pearl_power_hint_hide();
+                else pearl_power_hint_update(minus_held,percent);
+                example_lvgl_unlock();
+            }
+        }
+        was_minus_held=minus_held;
         if(u==BUTTON_SHORT){pearl_audio_volume(-2);ESP_LOGW("pearl","Volume down GPIO%d",up);}
         if(d==BUTTON_SHORT){pearl_audio_volume(2);ESP_LOGW("pearl","Volume up GPIO%d",down);}
         if(d==BUTTON_LONG){display_sleep(!screen_locked,!screen_locked);}
@@ -799,6 +812,7 @@ static void enter_standby(bool manual){
     if(visible){
         if(atomic_load(&screen_locked))display_sleep(false,false);
         if(example_lvgl_lock(-1)){
+            pearl_power_hint_hide();
             pearl_ui_shutdown_begin();
             lv_refr_now(NULL);
             // The final QSPI DMA flush can outlive lv_refr_now. Give it a bounded

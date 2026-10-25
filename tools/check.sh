@@ -42,3 +42,5 @@ cc -Wall -Wextra -Werror -fsanitize=address,undefined -I "$shared/wifi_lifecycle
 /tmp/pearl-wifi-lifecycle
 cc -Wall -Wextra -Werror -fsanitize=address,undefined -I main tests/test_media.c main/library.c main/metadata.c main/playlist.c "$shared/device_input/device_input.c" $media_link -lm -o /tmp/pearl-media-tests
 /tmp/pearl-media-tests
+
+python3 tests/test_power_hint.py

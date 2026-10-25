@@ -10,7 +10,7 @@
 
 int pearl_volume(int current,int delta,int ceiling) { int n=current+delta;return n<0?0:n>ceiling?ceiling:n; }
 pearl_button_event pearl_button_update(pearl_button *b,bool pressed,uint32_t now) {
-    return (pearl_button_event)device_gesture_update(b,pressed,now,35,1800);
+    return (pearl_button_event)device_gesture_update(b,pressed,now,35,PEARL_BUTTON_HOLD_MS);
 }
 #include "metadata.h"
 #include "managed.h"

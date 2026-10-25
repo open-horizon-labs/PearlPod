@@ -26,3 +26,6 @@ docs/ui/current/
 
 # Personal theme packs remain local.
 theme-packs/personal/
+
+# Local verification build state
+.state/

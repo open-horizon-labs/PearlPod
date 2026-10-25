@@ -37,6 +37,7 @@ static void vTaskDelay(int ms){clock_us+=(int64_t)ms*1000;if(!flush_stuck)draw.f
 static int64_t esp_timer_get_time(void){return clock_us;}
 static bool example_lvgl_lock(int timeout){(void)timeout;return true;}
 static void example_lvgl_unlock(void){}
+static void pearl_power_hint_hide(void){}
 static void pearl_ui_shutdown_begin(void){record(BEGIN);}
 static void pearl_ui_shutdown_cancel(const char *reason){assert(reason&&*reason);record(CANCEL);}
 static void pearl_power_activity(void){activities++;}

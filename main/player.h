@@ -20,6 +20,7 @@ int pearl_next(const pearl_library *lib,int current,int direction);
 int pearl_volume(int current,int delta,int ceiling);
 
 #include "device_input.h"
+enum { PEARL_BUTTON_HOLD_MS = 1800 };
 typedef device_gesture pearl_button;
 typedef enum { BUTTON_NONE,BUTTON_SHORT,BUTTON_LONG } pearl_button_event;
 pearl_button_event pearl_button_update(pearl_button *b,bool pressed,uint32_t now);
