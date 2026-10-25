@@ -1,4 +1,5 @@
 #include "player.h"
+#include "media.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <stdlib.h>
@@ -66,11 +67,12 @@ if(l->truncated){pearl_library_free(l);return -1;}unsigned *map=malloc((l->album
  for(unsigned a=0;a<l->album_count;a++){pearl_album *album=&l->albums[a];int c=pearl_collection_add(l,PEARL_ALBUMS,album->title,album->path);for(unsigned i=0;i<album->count;i++)pearl_collection_append(l,c,album->first+i);}
  for(unsigned i=0;i<l->collection_count;i++)if(l->collections[i].kind==PEARL_PLAYLISTS)pearl_playlist_read(l,i,root);
  if(l->truncated){pearl_library_free(l);return -1;}if(l->collection_count>1)qsort(l->collections,l->collection_count,sizeof(*l->collections),collection_cmp);return 0;}
-void pearl_library_free(pearl_library *l){for(unsigned i=0;i<l->track_count;i++)free_track(&l->tracks[i]);for(unsigned i=0;i<l->album_count;i++){free(l->albums[i].path);free(l->albums[i].title);free(l->albums[i].artist);free(l->albums[i].art);}for(unsigned i=0;i<l->collection_count;i++){free(l->collections[i].title);free(l->collections[i].path);free(l->collections[i].tracks);}free(l->tracks);free(l->albums);free(l->collections);memset(l,0,sizeof(*l));}
-int pearl_next(const pearl_library *l,int current,int direction){if(current<0||(unsigned)current>=l->track_count)return l->track_count?0:-1;const pearl_album *a=&l->albums[l->tracks[current].album];int relative=(current-(int)a->first+direction)%(int)a->count;if(relative<0)relative+=a->count;return a->first+relative;}
+void pearl_library_free(pearl_library *l){for(unsigned i=0;i<l->track_count;i++)free_track(&l->tracks[i]);for(unsigned i=0;i<l->album_count;i++){free(l->albums[i].path);free(l->albums[i].title);free(l->albums[i].artist);free(l->albums[i].art);}for(unsigned i=0;i<l->collection_count;i++){free(l->collections[i].title);free(l->collections[i].path);free(l->collections[i].tracks);}free(l->tracks);free(l->albums);free(l->collections);free(l->root);media_library_free(l->media_catalog);memset(l,0,sizeof(*l));}
+bool pearl_track_playable(const pearl_library *l,int track){return l&&track>=0&&(unsigned)track<l->track_count&&(!l->tracks[track].media_owned||l->tracks[track].media);}
+int pearl_next(const pearl_library *l,int current,int direction){if(current<0||(unsigned)current>=l->track_count){for(unsigned n=0;n<l->track_count;n++)if(pearl_track_playable(l,n))return n;return -1;}const pearl_album *a=&l->albums[l->tracks[current].album];int relative=current-(int)a->first;for(unsigned n=0;n<a->count;n++){relative=(relative+(direction<0?-1:1)+(int)a->count)%(int)a->count;int candidate=a->first+relative;if(pearl_track_playable(l,candidate)&&(!l->tracks[candidate].media||!media_kind_resumes(l->tracks[candidate].media->kind)|| (l->tracks[current].media&&media_kind_resumes(l->tracks[current].media->kind))))return candidate;}return -1;}
 int pearl_collection_step(const pearl_library *l,int collection,int position,int direction){if(collection<0||(unsigned)collection>=l->collection_count)return -1;const pearl_collection *c=&l->collections[collection];if(!c->count)return -1;int relative=(position+direction)%(int)c->count;if(relative<0)relative+=c->count;return relative;}
 
-int pearl_library_scan(pearl_library *l,const char *root){return library_scan(l,root,NULL);}
+int pearl_library_scan(pearl_library *l,const char *root){int result=library_scan(l,root,NULL);if(!result&&!pearl_media_apply(l,root)){pearl_library_free(l);return -1;}return result;}
 #if defined(ESP_PLATFORM) || defined(PEARL_MANAGED_HOST)
 bool pearl_library_validate_sync(const char *sha){pearl_library l={0};
 #ifdef PEARL_MANAGED_HOST

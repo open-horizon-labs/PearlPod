@@ -6,13 +6,13 @@
 Embedded native ESP32-S3, 460×460 AMOLED touchscreen and two physical buttons.
 
 ## Users
-Listeners independently choose and enjoy music. A household member prepares the music collection and maintains firmware.
+Listeners independently choose music, podcasts and audiobooks, and resume spoken listening after interruptions. A household member prepares and queues the collection and maintains firmware.
 
 ## Product Purpose
-An offline music player that listeners want to use and can operate without repeated coaching.
+An offline music and spoken-audio player that listeners want to use and can operate without repeated coaching.
 
 ## Capabilities and Constraints
-Multiple albums and nested directories, album art, touchscreen navigation and playback selection, 3.5 mm audio, two-button volume, long-hold power, fast startup. No Wi-Fi sync in this version. Preserve and verify factory recovery before flashing.
+Multiple albums and nested directories, album art, touchscreen navigation and playback selection, 3.5 mm audio, two-button volume, long-hold power, fast startup. Explicit Wi-Fi sync from the household library computer; offline startup and listening. Podcasts and audiobooks use compatible MP3 preparation with chapters and durable per-item progress. Music starts fresh; spoken items resume. Sync and startup never autoplay. Preserve and verify factory recovery before flashing.
 
 ## Brand Commitments
 Optional original theme packs and personalized greetings. Readable controls and album artwork take priority over decorative animation.

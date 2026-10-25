@@ -1,4 +1,5 @@
 #include "library_index.h"
+#include "media.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,7 @@ static bool valid(const pearl_library *l){
  if(l->truncated)return false;
  for(unsigned i=0;i<l->track_count;i++){const pearl_track *t=&l->tracks[i];if(!t->path||!t->title||!t->artist||t->album>=l->album_count)return false;const pearl_album *a=&l->albums[t->album];if(i<a->first||i-a->first>=a->count)return false;}
  for(unsigned i=0;i<l->album_count;i++){const pearl_album *a=&l->albums[i];if(!a->path||!a->title||!a->artist||!a->art||a->first>l->track_count||a->count>l->track_count-a->first)return false;for(unsigned j=0;j<a->count;j++)if(l->tracks[a->first+j].album!=i)return false;}
- for(unsigned i=0;i<l->collection_count;i++){const pearl_collection *c=&l->collections[i];if(!c->title||!c->path||(unsigned)c->kind>PEARL_PLAYLISTS||(c->count&&!c->tracks))return false;for(unsigned j=0;j<c->count;j++)if(c->tracks[j]>=l->track_count)return false;}
+ for(unsigned i=0;i<l->collection_count;i++){const pearl_collection *c=&l->collections[i];if(!c->title||!c->path||(unsigned)c->kind>PEARL_AUDIOBOOKS||(c->count&&!c->tracks))return false;for(unsigned j=0;j<c->count;j++)if(c->tracks[j]>=l->track_count)return false;}
  return true;
 }
 bool pearl_index_save(const pearl_library *l,const char *root,const char *revision){
@@ -77,6 +78,6 @@ bool pearl_index_load(pearl_library *out,const char *root,const char *revision){
  if(!s.ok||s.bytes!=s.limit)goto fail;
  unsigned char end[4];if(fread(end,1,4,f)!=4)goto fail;uint32_t checksum=(uint32_t)end[0]|((uint32_t)end[1]<<8)|((uint32_t)end[2]<<16)|((uint32_t)end[3]<<24);
  if(checksum!=s.hash||!valid(&l))goto fail;
- fclose(f);*out=l;return true;
+ fclose(f);if(!pearl_media_apply(&l,root)){pearl_library_free(&l);return false;}*out=l;return true;
 fail:fclose(f);pearl_library_free(&l);return false;
 }

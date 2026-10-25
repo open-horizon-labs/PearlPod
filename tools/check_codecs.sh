@@ -2,7 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 shared=shared/embedded-services/components
-export C_INCLUDE_PATH="${C_INCLUDE_PATH:+$C_INCLUDE_PATH:}$PWD/$shared/device_input/include:$PWD/$shared/device_image/include:$PWD/$shared/device_power/include:$PWD/$shared/wifi_station/include:$PWD/$shared/wifi_profiles/include:$PWD/$shared/wifi_provisioning/include:$PWD/$shared/tomlc17/include"
+export C_INCLUDE_PATH="${C_INCLUDE_PATH:+$C_INCLUDE_PATH:}$PWD/$shared/media_library/include:$PWD/$shared/device_input/include:$PWD/$shared/device_image/include:$PWD/$shared/device_power/include:$PWD/$shared/wifi_station/include:$PWD/$shared/wifi_profiles/include:$PWD/$shared/wifi_provisioning/include:$PWD/$shared/tomlc17/include"
 fixture_dir=$(mktemp -d /tmp/pearl-codecs.XXXXXX)
 trap 'rm -rf "$fixture_dir"' EXIT
 cc -O1 -fsanitize=address,undefined -I vendor -I main tests/test_flac_compat.c main/metadata.c -lm -o /tmp/pearl-flac-compat

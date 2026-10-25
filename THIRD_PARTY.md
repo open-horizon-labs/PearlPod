@@ -13,3 +13,5 @@ Artwork under theme-packs/ was generated with OpenAI image generation for this p
 Public packs contain original palettes and greetings; neutral synthetic image fixtures exercise parser/allocation tests. Personal character artwork is excluded from public source and packages.
 
 Shared device-service implementations and their donor notices are maintained in the private pinned `shared/embedded-services` submodule. See [docs/SHARED-SERVICES.md](docs/SHARED-SERVICES.md) for access requirements, ownership and retained product behavior. Compatibility headers preserve existing firmware names without keeping duplicate implementations.
+
+`vendor/minimp3_ex.h` is the matching CC0 minimp3 indexed callback/seek extension, reused byte-for-byte from the Thingee donor alongside the already identical `minimp3.h`. Both preserve upstream license notices. The firmware uses its actual sample-indexed seek for MP3 books and episodes.

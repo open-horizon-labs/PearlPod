@@ -707,7 +707,7 @@ static void library_task(void *arg)
         char revision[65];pearl_managed_revision(revision);
         bool cached=pearl_index_load(&music,"/sdcard/music",revision);
         ESP_LOGW("pearl","Library index %s",cached?"loaded":"missing or invalid; scanning");
-        if(!cached&&pearl_library_scan(&music,"/sdcard/music"))err="Add a music folder to your card, then restart.";
+        if(!cached&&pearl_library_scan(&music,"/sdcard/music"))err="Cannot load library. Check card or free memory.";
         else {
             if(!cached&&!pearl_index_save(&music,"/sdcard/music",revision))ESP_LOGW("pearl","Library index save failed; next boot will scan");
             pearl_audio_start(&music);audio_started=true;

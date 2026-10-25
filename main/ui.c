@@ -1,4 +1,5 @@
 #include "player.h"
+#include "media.h"
 #include "network.h"
 #include "power.h"
 #include "lvgl.h"
@@ -42,7 +43,11 @@ static int page=-2,last_track=-2,last_mark=-2;
 static unsigned *track_offsets,*browse_ids,browse_count;
 static int *album_scroll,*track_scroll;
 static pearl_view view=PEARL_ALBUMS;
-static const char *view_names[]={"Albums","Artists","Folders","Playlists"};
+static const char *view_names[]={"Albums","Artists","Folders","Playlists","Podcasts","Audiobooks"};
+static lv_obj_t *spoken_time,*spoken_bar;
+static bool rendered_spoken;
+static unsigned chapter_offset;
+#define CHAPTER_PAGE 16u
 static QueueHandle_t art_requests,art_results;
 static char startup_error[120];
 typedef struct {char path[PEARL_PATH];unsigned generation;int slot;} art_request;
@@ -66,7 +71,7 @@ static void wifi_setup(lv_event_t *e){pearl_network_setup();}
 static void wifi_connect(lv_event_t *e){pearl_network_connect();}
 static void wifi_off(lv_event_t *e){pearl_network_off();}
 static pearl_collection *group(void){return &lib->collections[page];}
-static void rebuild_browse(void){browse_count=0;for(unsigned i=0;i<lib->collection_count;i++)if(lib->collections[i].kind==view)browse_ids[browse_count++]=i;album_offset=0;memset(album_scroll,0,(lib->collection_count/ALBUM_PAGE+1)*sizeof(*album_scroll));}
+static void rebuild_browse(void){browse_count=0;for(unsigned i=0;i<lib->collection_count;i++)if(lib->collections[i].kind==view&&lib->collections[i].count)browse_ids[browse_count++]=i;album_offset=0;memset(album_scroll,0,(lib->collection_count/ALBUM_PAGE+1)*sizeof(*album_scroll));}
 static void choose_view(lv_event_t *e){view=(intptr_t)lv_event_get_user_data(e);rebuild_browse();page=-1;render();}
 static void rescan(lv_event_t *e){pearl_library_rescan();}
 static lv_obj_t *label(lv_obj_t *parent,const char *text,int x,int y,int w,const lv_font_t *font){
@@ -82,23 +87,28 @@ static void sync_action_click(lv_event_t *e){
     (void)e;
     pearl_sync_view s=pearl_sync_snapshot();
     if(s.busy)pearl_sync_cancel();
-    else if(s.complete&&lib){view=PEARL_PLAYLISTS;rebuild_browse();navigate(-1);}
+    else if(s.complete&&lib){navigate(-4);}
     else pearl_sync_start();
 }
 static void go_albums(lv_event_t *e){navigate(-1);}
 static void go_now(lv_event_t *e){navigate(-3);}
-static void go_back(lv_event_t *e){navigate(page==-6?-3:(page==-7||page==-5||page==-1)?-4:-1);}
+static void go_back(lv_event_t *e){navigate((page==-6||page==-8)?-3:(page==-7||page==-5||page==-1)?-4:-1);}
 static void open_album(lv_event_t *e){int target=(intptr_t)lv_event_get_user_data(e);if(target!=page)track_offset=track_offsets[target];navigate(target);}
 static void browse_page(int direction){
     save_place();if(page==-1){if(direction<0&&album_offset>=ALBUM_PAGE)album_offset-=ALBUM_PAGE;else if(direction>0&&album_offset+ALBUM_PAGE<browse_count)album_offset+=ALBUM_PAGE;else return;}
+    else if(page==-8){const media_item *item=pearl_media_item(lib,pearl_audio_state().track);if(!item)return;if(direction<0&&chapter_offset>=CHAPTER_PAGE)chapter_offset-=CHAPTER_PAGE;else if(direction>0&&chapter_offset+CHAPTER_PAGE<item->chapter_count)chapter_offset+=CHAPTER_PAGE;else return;}
     else if(page>=0){if(direction<0&&track_offset>=TRACK_PAGE)track_offset-=TRACK_PAGE;else if(direction>0&&track_offset+TRACK_PAGE<group()->count)track_offset+=TRACK_PAGE;else return;track_scroll[page]=0;}
     render();
 }
 static void track_page(lv_event_t *e){browse_page((intptr_t)lv_event_get_user_data(e));}
 static void select_track(lv_event_t *e){save_place();pearl_audio_play_collection(page,(intptr_t)lv_event_get_user_data(e));page=-3;render();}
 static void play(lv_event_t *e){pearl_audio_toggle();}
-static void prev(lv_event_t *e){pearl_audio_step(-1);}
-static void next(lv_event_t *e){pearl_audio_step(1);}
+static void prev(lv_event_t *e){if(pearl_audio_state().spoken)pearl_audio_seek(-30);else pearl_audio_step(-1);}
+static void next(lv_event_t *e){if(pearl_audio_state().spoken)pearl_audio_seek(30);else pearl_audio_step(1);}
+static void chapters_open(lv_event_t *e){chapter_offset=0;navigate(-8);}
+static void chapter_select(lv_event_t *e){pearl_audio_chapter((intptr_t)lv_event_get_user_data(e));navigate(-3);}
+static void restart_item(lv_event_t *e){pearl_audio_seek_to(0);}
+static void format_time(char *out,size_t size,uint32_t ms){unsigned seconds=ms/1000;if(seconds>=3600)snprintf(out,size,"%u:%02u:%02u",seconds/3600,seconds/60%60,seconds%60);else snprintf(out,size,"%u:%02u",seconds/60,seconds%60);}
 static void play_album(lv_event_t *e){if(lib&&page>=0){save_place();pearl_audio_play_collection(page,0);page=-3;render();}}
 static void gesture(lv_event_t *e){
     lv_indev_t *input=lv_indev_get_act();if(!input||!lib||shutting_down)return;lv_dir_t dir=lv_indev_get_gesture_dir(input);
@@ -124,7 +134,7 @@ static void art_task(void *arg){
 }
 static bool request_art(const char *path,int slot){art_request r={.generation=art_generation,.slot=slot};snprintf(r.path,sizeof(r.path),"%s",path?path:"");return xQueueSend(art_requests,&r,0)==pdTRUE;}
 static void reset_body(void){
-    art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_obj_clean(body);title=album_label=art=network_info=lyrics_button=sync_info=sync_action=sync_detail=sync_context=sync_count=sync_timing=sync_bar=NULL;memset(lyric_lines,0,sizeof(lyric_lines));last_track=last_mark=-2;
+    art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_obj_clean(body);spoken_time=spoken_bar=NULL;title=album_label=art=network_info=lyrics_button=sync_info=sync_action=sync_detail=sync_context=sync_count=sync_timing=sync_bar=NULL;memset(lyric_lines,0,sizeof(lyric_lines));last_track=last_mark=-2;
     if(art_pixels){lv_img_cache_invalidate_src(&art_desc);free(art_pixels);art_pixels=NULL;}
     for(unsigned i=0;i<ALBUM_PAGE;i++){lv_img_cache_invalidate_src(&thumb_desc[i]);free(thumb_pixels[i]);thumb_pixels[i]=NULL;thumbs[i]=NULL;thumb_requested[i]=false;}
     memset(track_rows,0,sizeof(track_rows));lv_obj_scroll_to_y(body,0,LV_ANIM_OFF);
@@ -145,9 +155,9 @@ static void render(void){
     lv_obj_set_style_text_align(status,LV_TEXT_ALIGN_LEFT,0);lv_obj_set_style_text_color(status,lv_color_hex(yellow),0);
     lv_obj_set_pos(status,18,367);lv_obj_set_size(status,424,20);lv_obj_clear_flag(hint,LV_OBJ_FLAG_HIDDEN);
     unsigned count=0;bool has_pages=false;
-    if(page==-4){lv_label_set_text(heading,"Your library");lv_label_set_text(hint,"Choose how to explore");for(int i=0;i<4;i++)button(body,view_names[i],0,i*60,424,52,choose_view,(void *)(intptr_t)i);button(body,"Rescan card",0,240,424,60,rescan,NULL);button(body,"WiFi",0,312,424,60,wifi_open,NULL);button(body,"Sync now",0,384,424,60,sync_now,NULL);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);return;
+    if(page==-4){lv_label_set_text(heading,"Your library");lv_label_set_text(hint,"Choose how to explore");for(int i=0;i<6;i++)button(body,view_names[i],0,i*60,424,52,choose_view,(void *)(intptr_t)i);button(body,"Rescan card",0,360,424,60,rescan,NULL);button(body,"WiFi",0,432,424,60,wifi_open,NULL);button(body,"Sync now",0,504,424,60,sync_now,NULL);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);return;
     }else if(page==-7){
-        lv_label_set_text(heading,"Sync music");lv_obj_set_pos(heading,96,12);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(heading,"Sync library");lv_obj_set_pos(heading,96,12);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(hint,"Only changed files are copied.");
         sync_info=label(body,"",0,4,424,&lv_font_montserrat_28);lv_label_set_long_mode(sync_info,LV_LABEL_LONG_SCROLL_CIRCULAR);lv_obj_set_style_text_color(sync_info,lv_color_hex(yellow),0);
         sync_detail=label(body,"",0,48,424,&lv_font_montserrat_20);lv_obj_set_height(sync_detail,30);lv_label_set_long_mode(sync_detail,LV_LABEL_LONG_SCROLL_CIRCULAR);
@@ -159,15 +169,20 @@ static void render(void){
     }else if(page==-5){
         lv_label_set_text(heading,"WiFi");lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_label_set_text(hint,"Setup is for a grown-up. Music stays offline.");network_info=label(body,"WiFi is off",0,0,424,&lv_font_montserrat_20);lv_obj_set_height(network_info,88);lv_label_set_long_mode(network_info,LV_LABEL_LONG_WRAP);network_buttons[0]=button(body,"Set up WiFi",0,100,424,60,wifi_setup,NULL);network_buttons[1]=button(body,"Connect for diagnostics",0,172,424,60,wifi_connect,NULL);network_buttons[2]=button(body,"Turn WiFi off",0,244,424,60,wifi_off,NULL);return;
     }else if(page==-1){
-        lv_label_set_text(heading,view_names[view]);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_obj_set_width(heading,194);lv_label_set_text(hint,browse_count>3?"Swipe up to explore":"Choose your music");
-        if(!lib||!browse_count){label(body,view==PEARL_PLAYLISTS?"Your playlists go here.":"Your music goes here.",0,25,420,&lv_font_montserrat_24);lv_obj_t *help=label(body,view==PEARL_PLAYLISTS?"Add M3U, M3U8 or XSPF files to the music folder, then rescan.":"Add albums to the card's music folder, then rescan.",0,80,420,&lv_font_montserrat_20);lv_obj_set_height(help,100);lv_label_set_long_mode(help,LV_LABEL_LONG_WRAP);return;}
+        lv_label_set_text(heading,view_names[view]);lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_obj_set_width(heading,194);lv_label_set_text(hint,browse_count>3?"Swipe up to explore":view>=PEARL_PODCASTS?"Choose something to hear":"Choose your music");
+        if(!lib||!browse_count){label(body,view==PEARL_PODCASTS?"Your podcasts go here.":view==PEARL_AUDIOBOOKS?"Your books go here.":view==PEARL_PLAYLISTS?"Your playlists go here.":"Your music goes here.",0,25,420,&lv_font_montserrat_24);lv_obj_t *help=label(body,view>=PEARL_PODCASTS?"Choose podcasts or audiobooks on the library computer, then use Sync now.":view==PEARL_PLAYLISTS?"Add M3U, M3U8 or XSPF files to the music folder, then rescan.":"Add albums to the card's music folder, then rescan.",0,80,420,&lv_font_montserrat_20);lv_obj_set_height(help,100);lv_label_set_long_mode(help,LV_LABEL_LONG_WRAP);return;}
         count=browse_count-album_offset;if(count>ALBUM_PAGE)count=ALBUM_PAGE;for(unsigned i=0;i<count;i++){unsigned index=browse_ids[album_offset+i];pearl_collection *c=&lib->collections[index];row(c->title,c->count,index,i*100,true);}
         has_pages=browse_count>ALBUM_PAGE;lv_obj_scroll_to_y(body,album_scroll[album_offset/ALBUM_PAGE],LV_ANIM_OFF);
         if(has_pages)lv_label_set_text(hint,"Swipe left / right for more");
     }else if(page>=0&&lib&&(unsigned)page<lib->collection_count){
-        pearl_collection *a=group();lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_obj_set_width(heading,194);lv_label_set_text(heading,a->title);button(body,LV_SYMBOL_PLAY "  Play all",0,0,424,64,play_album,NULL);
-        count=a->count-track_offset;if(count>TRACK_PAGE)count=TRACK_PAGE;for(unsigned i=0;i<count;i++)row(lib->tracks[a->tracks[track_offset+i]].title,0,track_offset+i,76+i*80,false);
+        pearl_collection *a=group();lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_obj_set_width(heading,194);lv_label_set_text(heading,a->title);button(body,a->kind>=PEARL_PODCASTS?LV_SYMBOL_PLAY "  Play / resume":LV_SYMBOL_PLAY "  Play all",0,0,424,64,play_album,NULL);
+        count=a->count-track_offset;if(count>TRACK_PAGE)count=TRACK_PAGE;for(unsigned i=0;i<count;i++){unsigned t=a->tracks[track_offset+i];const media_item *item=pearl_media_item(lib,t);row(item&&media_kind_resumes(item->kind)?item->title:lib->tracks[t].title,0,track_offset+i,76+i*80,false);}
         has_pages=a->count>TRACK_PAGE;lv_label_set_text(hint,"Swipe right to return");lv_obj_scroll_to_y(body,track_scroll[page],LV_ANIM_OFF);
+    }else if(page==-8){
+        lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(heading,"Chapters");lv_obj_set_pos(heading,96,12);lv_label_set_text(hint,"Choose a chapter; Play stays under your control.");
+        pearl_state state=pearl_audio_state();const media_item *item=pearl_media_item(lib,state.track);
+        if(!item||!item->chapter_count)label(body,"No chapter list for this item.",0,24,424,&lv_font_montserrat_24);
+        else {count=item->chapter_count-chapter_offset;if(count>CHAPTER_PAGE)count=CHAPTER_PAGE;has_pages=item->chapter_count>CHAPTER_PAGE;for(unsigned j=0;j<count;j++){unsigned n=chapter_offset+j;char when[24],line[192];format_time(when,sizeof(when),item->chapters[n].start_ms);snprintf(line,sizeof(line),"%s  %s",when,item->chapters[n].title);button(body,line,0,j*72,424,64,chapter_select,(void *)(intptr_t)n);}}
     }else if(page==-6){
         lv_obj_clear_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_set_pos(heading,96,12);lv_label_set_text(heading,"Lyrics");lv_label_set_text(hint,"Swipe to browse. Follow keeps your place.");
         pearl_state state=pearl_audio_state();
@@ -183,8 +198,18 @@ static void render(void){
         title=label(body,"Choose an album",0,248,424,&lv_font_montserrat_24);lv_label_set_long_mode(title,LV_LABEL_LONG_SCROLL_CIRCULAR);lv_obj_set_style_anim_speed(title,28,0);lv_obj_set_style_text_align(title,LV_TEXT_ALIGN_CENTER,0);
         album_label=label(body,"Your music. Your world.",0,278,328,&lv_font_montserrat_16);lv_label_set_long_mode(album_label,LV_LABEL_LONG_SCROLL_CIRCULAR);lv_obj_set_style_anim_speed(album_label,24,0);
         lv_obj_set_pos(status,18,358);lv_obj_set_size(status,424,18);
+        pearl_state current=pearl_audio_state();rendered_spoken=current.spoken;
+        lv_label_set_text(lv_obj_get_child(lv_obj_get_child(transport,0),0),current.spoken?"-30s":LV_SYMBOL_PREV);
+        lv_label_set_text(lv_obj_get_child(lv_obj_get_child(transport,2),0),current.spoken?"+30s":LV_SYMBOL_NEXT);
+        if(current.spoken){
+            lv_obj_set_pos(art,152,0);lv_img_set_zoom(art,120*256/theme_image(false)->header.w);
+            lv_obj_set_pos(title,0,128);lv_obj_set_pos(album_label,0,162);lv_obj_set_width(album_label,424);
+            spoken_time=label(body,"",0,190,424,&lv_font_montserrat_20);lv_obj_set_style_text_align(spoken_time,LV_TEXT_ALIGN_CENTER,0);
+            spoken_bar=lv_bar_create(body);lv_obj_set_pos(spoken_bar,0,222);lv_obj_set_size(spoken_bar,424,8);lv_bar_set_range(spoken_bar,0,1000);lv_obj_set_style_bg_color(spoken_bar,lv_color_hex(teal),LV_PART_INDICATOR);
+            button(body,"Chapters",0,242,204,52,chapters_open,NULL);button(body,"Restart",220,242,204,52,restart_item,NULL);
+        }
     }
-    if(has_pages){lv_obj_clear_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_clear_flag(page_next,LV_OBJ_FLAG_HIDDEN);bool before=page==-1?album_offset>0:track_offset>0;bool after=page==-1?album_offset+count<browse_count:track_offset+count<group()->count;
+    if(has_pages){lv_obj_clear_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_clear_flag(page_next,LV_OBJ_FLAG_HIDDEN);bool before=page==-1?album_offset>0:page==-8?chapter_offset>0:track_offset>0;const media_item *chapter_item=page==-8?pearl_media_item(lib,pearl_audio_state().track):NULL;bool after=page==-1?album_offset+count<browse_count:page==-8?chapter_item&&chapter_offset+count<chapter_item->chapter_count:track_offset+count<group()->count;
         if(before)lv_obj_clear_state(page_prev,LV_STATE_DISABLED);else lv_obj_add_state(page_prev,LV_STATE_DISABLED);if(after)lv_obj_clear_state(page_next,LV_STATE_DISABLED);else lv_obj_add_state(page_next,LV_STATE_DISABLED);
     }else if(page!=-3)lv_obj_set_width(heading,348);
     // The album route is visibly selected only while browsing the album collection.
@@ -199,7 +224,7 @@ static void tick(lv_timer_t *timer){
         lv_obj_set_height(sync_context,s.count[0]?44:102);
         if(s.determinate)lv_obj_clear_flag(sync_bar,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(sync_bar,LV_OBJ_FLAG_HIDDEN);
         lv_bar_set_value(sync_bar,s.percent,LV_ANIM_OFF);
-        lv_label_set_text(lv_obj_get_child(sync_action,0),s.busy?"Cancel sync":s.complete?"Open playlists":"Start sync");
+        lv_label_set_text(lv_obj_get_child(sync_action,0),s.busy?"Cancel sync":s.complete?"Open library":"Start sync");
         char ready[64];snprintf(ready,sizeof(ready),"%u playlist%s saved",s.playlists_ready,s.playlists_ready==1?"":"s");
         lv_label_set_text(hint,s.playlists_ready?ready:"Only changed songs are copied.");
     }
@@ -207,9 +232,12 @@ static void tick(lv_timer_t *timer){
     pearl_state s=pearl_audio_state();if(page!=-6&&s.track!=lyric_track&&lyrics.text){pearl_lyrics_free(&lyrics);lyric_track=-1;}char text[160];snprintf(text,sizeof(text),"Vol %d",s.volume);lv_label_set_text(volume_label,text);
     lv_label_set_text(status,s.error[0]?s.error:startup_error);bool error=s.error[0]||startup_error[0];if(error)lv_obj_add_flag(hint,LV_OBJ_FLAG_HIDDEN);else if(page!=-3)lv_obj_clear_flag(hint,LV_OBJ_FLAG_HIDDEN);
     if(page==-3&&title){
-        if(s.track!=last_track){last_track=s.track;art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_img_cache_invalidate_src(&art_desc);free(art_pixels);art_pixels=NULL;if(s.track>=0&&(unsigned)s.track<lib->track_count){pearl_track *t=&lib->tracks[s.track];lv_label_set_text(title,t->title);if(t->lyrics)lv_obj_clear_flag(lyrics_button,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(lyrics_button,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(album_label,lib->albums[t->album].title);lv_img_set_src(art,theme_image(false));lv_img_set_pivot(art,0,0);lv_img_set_zoom(art,240*256/theme_image(false)->header.w);request_art(lib->albums[t->album].art[0]?lib->albums[t->album].art:t->path,-1);}}
+        if(s.spoken!=rendered_spoken){render();return;}
+        if(s.track!=last_track){last_track=s.track;art_generation++;art_request pending;while(xQueueReceive(art_requests,&pending,0)==pdTRUE){}lv_img_cache_invalidate_src(&art_desc);free(art_pixels);art_pixels=NULL;if(s.track>=0&&(unsigned)s.track<lib->track_count){pearl_track *t=&lib->tracks[s.track];lv_label_set_text(title,t->title);if(t->lyrics&&!s.spoken)lv_obj_clear_flag(lyrics_button,LV_OBJ_FLAG_HIDDEN);else lv_obj_add_flag(lyrics_button,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(album_label,lib->albums[t->album].title);lv_img_set_src(art,theme_image(false));lv_img_set_pivot(art,0,0);lv_img_set_zoom(art,(s.spoken?120:240)*256/theme_image(false)->header.w);request_art(lib->albums[t->album].art[0]?lib->albums[t->album].art:t->path,-1);}}
         lv_label_set_text(play_label,s.paused?LV_SYMBOL_PLAY:LV_SYMBOL_PAUSE);lv_obj_set_style_bg_color(lv_obj_get_parent(play_label),lv_color_hex(s.paused?yellow:teal),0);lv_label_set_text(heading,s.track<0?"Your music":s.paused?"Paused":"Now playing");
-        snprintf(text,sizeof(text),"%u:%02u",(unsigned)(s.seconds/60),(unsigned)(s.seconds%60));lv_label_set_text(time_label,text);lv_obj_clear_flag(time_label,LV_OBJ_FLAG_HIDDEN);
+        if(s.spoken&&spoken_time){const media_item *item=pearl_media_item(lib,s.track);if(item){lv_label_set_text(title,item->title);const char *context=item->artist;for(unsigned n=0;n<item->chapter_count;n++)if(s.milliseconds>=item->chapters[n].start_ms)context=item->chapters[n].title;lv_label_set_text(album_label,context);}
+        char elapsed[24],duration[24];format_time(elapsed,sizeof(elapsed),s.milliseconds);format_time(duration,sizeof(duration),s.duration_ms);snprintf(text,sizeof(text),"%s / %s%s",elapsed,duration,s.completed?"  Finished":s.seeking?"  Seeking":"");lv_label_set_text(spoken_time,text);lv_bar_set_value(spoken_bar,s.duration_ms?(uint64_t)s.milliseconds*1000/s.duration_ms:0,LV_ANIM_OFF);lv_obj_add_flag(time_label,LV_OBJ_FLAG_HIDDEN);}
+        else{snprintf(text,sizeof(text),"%u:%02u",(unsigned)(s.seconds/60),(unsigned)(s.seconds%60));lv_label_set_text(time_label,text);lv_obj_clear_flag(time_label,LV_OBJ_FLAG_HIDDEN);}
     }else lv_obj_add_flag(time_label,LV_OBJ_FLAG_HIDDEN);
     if(page==-6){
         if(s.track!=lyric_track){render();return;}
@@ -218,7 +246,7 @@ static void tick(lv_timer_t *timer){
     if(page>=0&&s.track!=last_mark){last_mark=s.track;pearl_collection *a=group();for(unsigned i=0;i<TRACK_PAGE&&track_rows[i];i++){bool active=a->tracks[track_offset+i]==(unsigned)s.track;lv_obj_set_style_bg_color(track_rows[i],lv_color_hex(active?0x284b50:surface),0);lv_label_set_text(lv_obj_get_child(track_rows[i],2),active?"Selected track":"");}}
     if(page==-1){lv_area_t area;lv_obj_get_coords(body,&area);for(unsigned i=0;i<ALBUM_PAGE&&thumbs[i];i++){lv_area_t bounds;lv_obj_get_coords(lv_obj_get_parent(thumbs[i]),&bounds);if(!thumb_requested[i]&&bounds.y2>=area.y1&&bounds.y1<=area.y2){pearl_collection *c=&lib->collections[browse_ids[album_offset+i]];if(c->count){pearl_track *t=&lib->tracks[c->tracks[0]];pearl_album *a=&lib->albums[t->album];thumb_requested[i]=request_art(a->art[0]?a->art:t->path,i);}else thumb_requested[i]=true;}}}
     art_result r;while(xQueueReceive(art_results,&r,0)==pdTRUE){
-        if(r.generation==art_generation&&r.pixels&&r.slot<0&&art){lv_img_cache_invalidate_src(&art_desc);uint8_t *old=art_pixels;art_pixels=r.pixels;art_desc=(lv_img_dsc_t){.header={.cf=LV_IMG_CF_TRUE_COLOR,.w=PEARL_ART_SIZE,.h=PEARL_ART_SIZE},.data_size=PEARL_ART_SIZE*PEARL_ART_SIZE*2,.data=art_pixels};lv_img_set_zoom(art,256);lv_img_set_src(art,&art_desc);free(old);}
+        if(r.generation==art_generation&&r.pixels&&r.slot<0&&art){lv_img_cache_invalidate_src(&art_desc);uint8_t *old=art_pixels;art_pixels=r.pixels;art_desc=(lv_img_dsc_t){.header={.cf=LV_IMG_CF_TRUE_COLOR,.w=PEARL_ART_SIZE,.h=PEARL_ART_SIZE},.data_size=PEARL_ART_SIZE*PEARL_ART_SIZE*2,.data=art_pixels};lv_img_set_zoom(art,(pearl_audio_state().spoken?120:240)*256/PEARL_ART_SIZE);lv_img_set_src(art,&art_desc);free(old);}
         else if(r.generation==art_generation&&r.pixels&&r.slot>=0&&r.slot<ALBUM_PAGE&&thumbs[r.slot]){int i=r.slot;thumb_pixels[i]=r.pixels;thumb_desc[i]=(lv_img_dsc_t){.header={.cf=LV_IMG_CF_TRUE_COLOR,.w=THUMB_SIZE,.h=THUMB_SIZE},.data_size=THUMB_SIZE*THUMB_SIZE*2,.data=r.pixels};lv_img_set_zoom(thumbs[i],256);lv_img_set_src(thumbs[i],&thumb_desc[i]);}
         else free(r.pixels);
     }
@@ -264,7 +292,7 @@ void pearl_ui_start(void){
     art_requests=xQueueCreate(ALBUM_PAGE+1,sizeof(art_request));art_results=xQueueCreate(ALBUM_PAGE+1,sizeof(art_result));xTaskCreate(art_task,"artwork",16384,NULL,1,NULL);lv_timer_create(tick,150,NULL);
     lifecycle_screen(false);
 }
-void pearl_ui_ready(pearl_library *l,const char *err){pearl_lyrics_free(&lyrics);lyric_track=-1;free(track_offsets);free(track_scroll);free(album_scroll);free(browse_ids);lib=l;track_offsets=calloc(l->collection_count+1,sizeof(*track_offsets));track_scroll=calloc(l->collection_count+1,sizeof(*track_scroll));album_scroll=calloc(l->collection_count/ALBUM_PAGE+1,sizeof(*album_scroll));browse_ids=calloc(l->collection_count+1,sizeof(*browse_ids));if(!track_offsets||!track_scroll||!album_scroll||!browse_ids){page=-2;lib=NULL;if(shutting_down)return;reset_body();lv_obj_add_flag(nav,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_next,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(heading,"Library too large");lv_label_set_text(status,"Reduce the card library, then restart.");return;}rebuild_browse();snprintf(startup_error,sizeof(startup_error),"%s",err?err:"");if(!startup_error[0]&&l->skipped)snprintf(startup_error,sizeof(startup_error),"Skipped %u entries; check paths/playlists.",l->skipped);page=-1;render();}
+void pearl_ui_ready(pearl_library *l,const char *err){pearl_lyrics_free(&lyrics);lyric_track=-1;free(track_offsets);free(track_scroll);free(album_scroll);free(browse_ids);lib=l;track_offsets=calloc(l->collection_count+1,sizeof(*track_offsets));track_scroll=calloc(l->collection_count+1,sizeof(*track_scroll));album_scroll=calloc(l->collection_count/ALBUM_PAGE+1,sizeof(*album_scroll));browse_ids=calloc(l->collection_count+1,sizeof(*browse_ids));if(!track_offsets||!track_scroll||!album_scroll||!browse_ids){page=-2;lib=NULL;if(shutting_down)return;reset_body();lv_obj_add_flag(nav,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_next,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(heading,"Library too large");lv_label_set_text(status,"Reduce the card library, then restart.");return;}rebuild_browse();snprintf(startup_error,sizeof(startup_error),"%s",err?err:"");if(!startup_error[0]&&l->media_recovered)snprintf(startup_error,sizeof(startup_error),"Recovered previous library. Sync again.");if(!startup_error[0]&&l->skipped)snprintf(startup_error,sizeof(startup_error),"Skipped %u entries; check paths/playlists.",l->skipped);page=-1;render();}
 
 void pearl_ui_scanning(void){if(shutting_down){page=-2;lib=NULL;return;}save_place();page=-2;reset_body();lv_label_set_text(lv_obj_get_child(back,0),page==-1?LV_SYMBOL_LIST:LV_SYMBOL_LEFT);lv_obj_add_flag(transport,LV_OBJ_FLAG_HIDDEN);lv_label_set_text(heading,"Scanning card...");lv_label_set_text(hint,"Your music will be ready soon.");lv_label_set_text(status,"");lv_obj_add_flag(nav,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(back,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_prev,LV_OBJ_FLAG_HIDDEN);lv_obj_add_flag(page_next,LV_OBJ_FLAG_HIDDEN);lib=NULL;}
 

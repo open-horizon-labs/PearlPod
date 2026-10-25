@@ -1,4 +1,6 @@
 #include "player.h"
+#include "media.h"
+#include <limits.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -18,7 +20,7 @@
 #define MINIMP3_IMPLEMENTATION
 #define MINIMP3_ONLY_MP3
 #define MINIMP3_NO_SIMD
-#include "minimp3.h"
+#include "minimp3_ex.h"
 #define DR_FLAC_IMPLEMENTATION
 #define DR_FLAC_NO_SIMD
 #include "dr_flac.h"
@@ -40,11 +42,15 @@ static int active_collection=-1,collection_position;
 static unsigned playback_epoch,decode_epoch;
 static nvs_handle_t prefs;
 static bool prefs_open;
+static int persisted_track=-2,persisted_volume=-2;
 static SemaphoreHandle_t prefs_lock;
 typedef struct {int kind,value,position;} command;
-enum {PLAY,TOGGLE,STEP,VOLUME,STOP,COLLECTION,DETACH,ATTACH};
+enum {PLAY,TOGGLE,STEP,VOLUME,STOP,COLLECTION,DETACH,ATTACH,SEEK,SEEK_TO,CHAPTER};
 static void send(int kind,int value){if(commands){command c={.kind=kind,.value=value};if(xQueueSend(commands,&c,0)!=pdTRUE)ESP_LOGW("player","command queue full");}}
 void pearl_audio_play(int i){send(PLAY,i);}
+void pearl_audio_seek(int seconds){send(SEEK,seconds);}
+void pearl_audio_seek_to(uint32_t milliseconds){send(SEEK_TO,(int)milliseconds);}
+void pearl_audio_chapter(unsigned chapter){send(CHAPTER,(int)chapter);}
 void pearl_audio_play_collection(int collection,int position){if(!commands||collection<0||position<0)return;command c={.kind=COLLECTION,.value=collection,.position=position};if(xQueueSend(commands,&c,0)!=pdTRUE)ESP_LOGW("player","command queue full");} void pearl_audio_toggle(void){send(TOGGLE,0);}
 void pearl_audio_step(int d){send(STEP,d);} void pearl_audio_volume(int d){send(VOLUME,d);}
 pearl_state pearl_audio_state(void){pearl_state s;if(!state_lock)return state;xSemaphoreTake(state_lock,portMAX_DELAY);s=state;xSemaphoreGive(state_lock);return s;}
@@ -86,40 +92,78 @@ static esp_err_t dac_init(void){
     if(cs_write(0x80032,0)||cs_write(0x10010,0))return ESP_FAIL;
     return ESP_OK;
 }
-static void save(void){if(!prefs_open)return;xSemaphoreTake(prefs_lock,portMAX_DELAY);if(detached||!library){xSemaphoreGive(prefs_lock);return;}pearl_state s=pearl_audio_state();nvs_set_i32(prefs,"volume",s.volume);if(s.track>=0&&(unsigned)s.track<library->track_count)nvs_set_str(prefs,"track",library->tracks[s.track].path);nvs_commit(prefs);xSemaphoreGive(prefs_lock);}
+static bool save(void){
+    if(!prefs_lock)return true;
+    xSemaphoreTake(prefs_lock,portMAX_DELAY);
+    if(detached||!library){xSemaphoreGive(prefs_lock);return true;}
+    pearl_state s=pearl_audio_state();
+    bool ok=pearl_media_progress_save(library,s.track,s.milliseconds,s.completed);
+    if(prefs_open&&(persisted_track!=s.track||persisted_volume!=s.volume)){nvs_set_i32(prefs,"volume",s.volume);if(s.track>=0&&(unsigned)s.track<library->track_count)nvs_set_str(prefs,"track",library->tracks[s.track].path);if(nvs_commit(prefs)!=ESP_OK)ok=false;else{persisted_track=s.track;persisted_volume=s.volume;}}
+    xSemaphoreGive(prefs_lock);
+    if(!ok)error("Cannot save listening place. Check card space.");
+    return ok;
+}
+/* Select/resume is explicit. Boot and library replacement stay paused. */
+static void select_position(pearl_state *s,int track,bool resume,bool play) {
+    if(!pearl_track_playable(library,track))track=-1;
+    s->track=track;s->seconds=s->milliseconds=0;s->duration_ms=0;s->completed=false;s->seeking=false;s->spoken=false;s->paused=track<0||!play;s->error[0]=0;
+    const media_item *item=pearl_media_item(library,track);
+    if(item){s->spoken=media_kind_resumes(item->kind);s->duration_ms=item->duration_ms;uint32_t position=pearl_media_start(library,track);media_progress saved;
+        if(resume&&media_kind_resumes(item->kind)&&pearl_media_progress_load(library,track,&saved)) {
+            position=saved.position_ms>item->duration_ms?item->duration_ms:saved.position_ms;s->completed=saved.completed;
+            if(play&&s->completed){position=0;s->completed=false;}
+        }
+        uint32_t offset=0;int located=pearl_media_locate(library,track,position,&offset);
+        if(located>=0)s->track=located;else{s->track=-1;s->paused=true;snprintf(s->error,sizeof(s->error),"This part is not on the card. Sync again.");}
+        s->milliseconds=position;s->seconds=position/1000;
+    }
+    playback_epoch++;
+}
+static void seek_position(pearl_state *s,uint32_t position) {
+    if(!pearl_track_playable(library,s->track))return;
+    if(s->duration_ms&&position>=s->duration_ms){position=s->duration_ms;s->completed=true;s->paused=true;}else s->completed=false;
+    uint32_t offset=0;int track=pearl_media_locate(library,s->track,position,&offset);
+    if(track<0){snprintf(s->error,sizeof(s->error),"This part is not on the card");s->paused=true;return;}
+    s->track=track;s->milliseconds=position;s->seconds=position/1000;s->seeking=!s->paused;playback_epoch++;
+}
 static void preference_task(void *arg){
     pearl_state last={.track=-99,.volume=-99};unsigned ticks=0;
     while(!stopping){
         vTaskDelay(pdMS_TO_TICKS(100));
         if(++ticks<30)continue;
         ticks=0;pearl_state s=pearl_audio_state();
-        if(s.track!=last.track||s.volume!=last.volume){save();last=s;}
+        if(s.track!=last.track||s.volume!=last.volume||s.paused!=last.paused||s.completed!=last.completed||(s.spoken&&s.milliseconds/5000!=last.milliseconds/5000)){save();last=s;}
     }
     preferences_running=false;vTaskDelete(NULL);
 }
 static void command_apply(command c){
     pearl_state s=pearl_audio_state();
     if(detached&&c.kind!=ATTACH&&c.kind!=STOP&&c.kind!=VOLUME)return;
-    if(c.kind==PLAY && c.value>=0 && (unsigned)c.value<library->track_count){active_collection=-1;s.track=c.value;playback_epoch++;s.seconds=0;s.milliseconds=0;s.paused=false;s.error[0]=0;}
-    else if(c.kind==COLLECTION){unsigned index=c.value,position=c.position;if(index<library->collection_count&&position<library->collections[index].count){active_collection=index;collection_position=position;s.track=library->collections[index].tracks[position];playback_epoch++;s.seconds=0;s.milliseconds=0;s.paused=false;s.error[0]=0;}}
-    else if(c.kind==DETACH){save();detached=true;detach_signaled=false;playback_epoch++;s.paused=true;}
-    else if(c.kind==ATTACH){xSemaphoreTake(prefs_lock,portMAX_DELAY);library=pending_library;active_collection=-1;s.track=-1;s.seconds=0;s.milliseconds=0;s.paused=true;s.error[0]=0;char path[PEARL_PATH];size_t size=sizeof(path);if(prefs_open&&nvs_get_str(prefs,"track",path,&size)==ESP_OK)for(unsigned i=0;i<library->track_count;i++)if(!strcmp(path,library->tracks[i].path)){s.track=i;break;}publish(s);detached=false;xSemaphoreGive(prefs_lock);}
-    else if(c.kind==TOGGLE){if(s.track<0 && library->track_count)s.track=0;s.paused=!s.paused;}
-    else if(c.kind==STEP){if(active_collection>=0){collection_position=pearl_collection_step(library,active_collection,collection_position,c.value);s.track=collection_position>=0?(int)library->collections[active_collection].tracks[collection_position]:-1;}else s.track=pearl_next(library,s.track,c.value);playback_epoch++;s.seconds=0;s.milliseconds=0;s.error[0]=0;}
+    if((c.kind==PLAY||c.kind==COLLECTION||c.kind==STEP)&&!save())return;
+    if(c.kind==PLAY && pearl_track_playable(library,c.value)){active_collection=-1;select_position(&s,c.value,true,true);}
+    else if(c.kind==COLLECTION){unsigned index=c.value,position=c.position;if(index<library->collection_count&&position<library->collections[index].count){active_collection=index;collection_position=position;select_position(&s,library->collections[index].tracks[position],true,true);for(unsigned n=0;n<library->collections[index].count;n++)if(library->collections[index].tracks[n]==(unsigned)s.track)collection_position=n;}}
+    else if(c.kind==DETACH){if(!save())return;detached=true;detach_signaled=false;playback_epoch++;s.paused=true;}
+    else if(c.kind==ATTACH){xSemaphoreTake(prefs_lock,portMAX_DELAY);library=pending_library;active_collection=-1;select_position(&s,-1,false,false);char path[PEARL_PATH];size_t size=sizeof(path);if(prefs_open&&nvs_get_str(prefs,"track",path,&size)==ESP_OK)for(unsigned i=0;i<library->track_count;i++)if(pearl_track_playable(library,i)&&!strcmp(path,library->tracks[i].path)){select_position(&s,i,true,false);break;}publish(s);detached=false;xSemaphoreGive(prefs_lock);}
+    else if(c.kind==TOGGLE){if(s.track<0&&library->track_count)select_position(&s,pearl_next(library,-1,1),true,false);if(s.track<0){publish(s);return;}if(s.completed)seek_position(&s,0);s.paused=!s.paused;}
+    else if(c.kind==STEP){int track;if(active_collection>=0){collection_position=pearl_collection_step(library,active_collection,collection_position,c.value);track=collection_position>=0?(int)library->collections[active_collection].tracks[collection_position]:-1;}else track=pearl_next(library,s.track,c.value);select_position(&s,track,true,!s.paused);}
+    else if(c.kind==SEEK){int64_t target=(int64_t)s.milliseconds+(int64_t)c.value*1000;seek_position(&s,target<0?0:target>UINT32_MAX?UINT32_MAX:(uint32_t)target);}
+    else if(c.kind==SEEK_TO)seek_position(&s,(uint32_t)c.value);
+    else if(c.kind==CHAPTER){const media_item *item=pearl_media_item(library,s.track);if(item&&c.value>=0&&(unsigned)c.value<item->chapter_count)seek_position(&s,item->chapters[c.value].start_ms);}
     else if(c.kind==VOLUME)s.volume=pearl_volume(s.volume,c.value,CONFIG_PEARL_MAX_VOLUME);
     else if(c.kind==STOP){s.paused=true;stopping=true;}
     publish(s);
+    if(c.kind==TOGGLE||c.kind==SEEK||c.kind==SEEK_TO||c.kind==CHAPTER||c.kind==STOP)save();
 }
 static bool service(int current){command c;while(xQueueReceive(commands,&c,0)==pdTRUE)command_apply(c);pearl_state s=pearl_audio_state();return !stopping && !detached && s.track==current && decode_epoch==playback_epoch;}
 /* CPU sample buffers are not I2S DMA buffers: i2s_channel_write copies them.
  * Keep scarce internal RAM available for WiFi and direct SD DMA batches. */
 static EXT_RAM_BSS_ATTR int32_t output[4096];
 static EXT_RAM_BSS_ATTR int16_t pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
-static EXT_RAM_BSS_ATTR uint8_t input[16384];
 static double phase;
 static int16_t previous[2];
 static bool have_previous;
 static uint64_t frames_written;
+static uint32_t timeline_start;
 static bool emit(const int16_t *samples,size_t frames,unsigned channels,unsigned rate,int current){
     if(!rate||rate>192000||!channels||channels>2){error("Unsupported audio format");return false;}
     pearl_state initial=pearl_audio_state();
@@ -137,7 +181,7 @@ static bool emit(const int16_t *samples,size_t frames,unsigned channels,unsigned
         phase-=1.0;previous[0]=l;previous[1]=r;
     }
     if(used){size_t bytes=0;if(i2s_channel_write(tx,output,used*sizeof(*output),&bytes,1000)!=ESP_OK||bytes!=used*sizeof(*output)){error("Audio output interrupted");return false;}}
-    pearl_state s=pearl_audio_state();s.seconds=frames_written/48000;s.milliseconds=frames_written/48;publish(s);return true;
+    pearl_state s=pearl_audio_state();s.milliseconds=timeline_start+frames_written/48;s.seconds=s.milliseconds/1000;publish(s);return true;
 }
 static bool wait_playing(int current){
     while(service(current)){
@@ -147,41 +191,55 @@ static bool wait_playing(int current){
         vTaskDelay(pdMS_TO_TICKS(15));
     }return false;
 }
+typedef struct {FILE *file;int current;bool canceled;} mp3_source;
+static size_t read_mp3(void *buffer,size_t size,void *context){mp3_source *source=context;size_t total=0;while(total<size){if(!service(source->current)){source->canceled=true;break;}size_t chunk=size-total;if(chunk>16384)chunk=16384;size_t n=fread((char *)buffer+total,1,chunk,source->file);total+=n;if(n<chunk)break;}return total;}
+static int seek_mp3(uint64_t offset,void *context){mp3_source *source=context;return offset>LONG_MAX?-1:fseek(source->file,(long)offset,SEEK_SET);}
 static bool decode(const char *path,int current){
     decode_epoch=playback_epoch;
-    const char *ext=strrchr(path,'.');phase=0;have_previous=false;frames_written=0;
+    const char *ext=strrchr(path,'.');phase=0;have_previous=false;
+    pearl_state initial=pearl_audio_state();timeline_start=pearl_media_start(library,current);
+    uint32_t offset=initial.milliseconds>timeline_start?initial.milliseconds-timeline_start:0;
+    frames_written=(uint64_t)offset*48;
+    initial.seeking=offset!=0;publish(initial);
     if(ext&&!strcasecmp(ext,".flac")){
         pearl_flac_stream stream;drflac *f=pearl_flac_open(path,&stream);if(!f){error("Can't read this FLAC. Choose another track.");return false;}
         if(f->channels>2||f->sampleRate>192000){pearl_flac_close(f,&stream);error("Only mono or stereo FLAC is supported");return false;}
-        uint64_t decoded=0;bool eof=false;while(wait_playing(current)){size_t n=drflac_read_pcm_frames_s16(f,1024,pcm);if(!n){if(!decoded||(f->totalPCMFrameCount&&decoded<f->totalPCMFrameCount))error("Damaged FLAC. Choose another track.");else eof=true;break;}decoded+=n;if(!emit(pcm,n,f->channels,f->sampleRate,current))break;}
+        uint64_t decoded=(uint64_t)offset*f->sampleRate/1000;
+        if(offset&&!drflac_seek_to_pcm_frame(f,decoded)){pearl_flac_close(f,&stream);error("Cannot seek this FLAC");return false;}
+        initial.seeking=false;publish(initial);bool eof=false;while(wait_playing(current)){size_t n=drflac_read_pcm_frames_s16(f,1024,pcm);if(!n){if(!decoded||(f->totalPCMFrameCount&&decoded<f->totalPCMFrameCount))error("Damaged FLAC. Choose another track.");else eof=true;break;}decoded+=n;if(!emit(pcm,n,f->channels,f->sampleRate,current))break;}
         pearl_flac_close(f,&stream);return eof;
     }
     if(ext&&!strcasecmp(ext,".wav")){
         drwav f;if(!drwav_init_file(&f,path,NULL)){error("Can't read this WAV. Choose another track.");return false;}
         if(f.channels>2||f.sampleRate>192000){drwav_uninit(&f);error("Only mono or stereo WAV is supported");return false;}
+        if(offset&&!drwav_seek_to_pcm_frame(&f,(uint64_t)offset*f.sampleRate/1000)){drwav_uninit(&f);error("Cannot seek this WAV");return false;}
+        initial.seeking=false;publish(initial);
         bool eof=false;while(wait_playing(current)){size_t n=drwav_read_pcm_frames_s16(&f,1024,pcm);if(!n){eof=true;break;}if(!emit(pcm,n,f.channels,f.sampleRate,current))break;}
         drwav_uninit(&f);return eof;
     }
-    FILE *f=fopen(path,"rb");if(!f){error("Track missing. Reinsert the card and restart.");return false;}
-    setvbuf(f,NULL,_IOFBF,16384);
-    pearl_audio_offset(f);
-    mp3dec_t decoder;mp3dec_init(&decoder);size_t count=0;bool eof=false,played=false;
-    while(wait_playing(current)){
-        if(count<sizeof(input)){size_t n=fread(input+count,1,sizeof(input)-count,f);count+=n;if(!n&&ferror(f)){error("Card read failed. Restart with the card inserted.");break;}}
-        if(!count){eof=true;break;}
-        mp3dec_frame_info_t info;int n=mp3dec_decode_frame(&decoder,input,count,pcm,&info);
-        if(info.frame_bytes>0){count-=info.frame_bytes;memmove(input,input+info.frame_bytes,count);}
-        else if(feof(f)){eof=true;break;}
-        else if(count==sizeof(input)){memmove(input,input+1,--count);}
-        if(n>0){played=true;if(!emit(pcm,n,info.channels,info.hz,current))break;}
-        else vTaskDelay(1);
+    FILE *f=fopen(path,"rb");if(!f){error("Track missing. Check the card.");return false;}
+    mp3dec_ex_t *decoder=calloc(1,sizeof(*decoder));if(!decoder){fclose(f);error("Not enough memory to seek MP3");return false;}
+    mp3_source source={.file=f,.current=current};mp3dec_io_t io={.read=read_mp3,.read_data=&source,.seek=seek_mp3,.seek_data=&source};
+    bool opened=mp3dec_ex_open_cb(decoder,&io,MP3D_SEEK_TO_SAMPLE)==0;
+    if(!opened||decoder->info.hz<8000||decoder->info.hz>192000||decoder->info.channels<1||decoder->info.channels>2){mp3dec_ex_close(decoder);free(decoder);fclose(f);if(!source.canceled)error("Can't read this MP3");return false;}
+    uint64_t sample=(uint64_t)offset*decoder->info.hz*decoder->info.channels/1000;
+    if(mp3dec_ex_seek(decoder,sample)){mp3dec_ex_close(decoder);free(decoder);fclose(f);if(!source.canceled)error("Cannot resume this MP3");return false;}
+    initial=pearl_audio_state();initial.seeking=false;
+    if(!initial.duration_ms&&decoder->samples)initial.duration_ms=decoder->samples*1000/decoder->info.hz/decoder->info.channels;
+    publish(initial);
+    bool eof=false;
+    while(wait_playing(current)) {
+        size_t samples=mp3dec_ex_read(decoder,pcm,MINIMP3_MAX_SAMPLES_PER_FRAME);
+        if(source.canceled)break;
+        if(!samples){if(decoder->last_error||ferror(f))error("Card read failed. Try Play again.");else eof=true;break;}
+        if(!emit(pcm,samples/decoder->info.channels,decoder->info.channels,decoder->info.hz,current))break;
     }
-    fclose(f);if(eof&&!played){error("Can't read this MP3. Choose another track.");return false;}return eof;
+    mp3dec_ex_close(decoder);free(decoder);fclose(f);return eof;
 }
 static void task(void *arg){
-    if(nvs_open("pearl",NVS_READWRITE,&prefs)==ESP_OK){prefs_open=true;int32_t v;pearl_state s=pearl_audio_state();if(nvs_get_i32(prefs,"volume",&v)==ESP_OK)s.volume=pearl_volume(v,0,CONFIG_PEARL_MAX_VOLUME);char p[PEARL_PATH];size_t n=sizeof(p);if(nvs_get_str(prefs,"track",p,&n)==ESP_OK)for(unsigned i=0;i<library->track_count;i++)if(!strcmp(p,library->tracks[i].path)){s.track=i;break;}publish(s);}
+    if(nvs_open("pearl",NVS_READWRITE,&prefs)==ESP_OK){prefs_open=true;int32_t v;pearl_state s=pearl_audio_state();if(nvs_get_i32(prefs,"volume",&v)==ESP_OK)s.volume=pearl_volume(v,0,CONFIG_PEARL_MAX_VOLUME);char p[PEARL_PATH];size_t n=sizeof(p);if(nvs_get_str(prefs,"track",p,&n)==ESP_OK)for(unsigned i=0;i<library->track_count;i++)if(pearl_track_playable(library,i)&&!strcmp(p,library->tracks[i].path)){select_position(&s,i,true,false);break;}publish(s);}
     preferences_running=true;
-    if(xTaskCreate(preference_task,"preferences",3072,NULL,1,NULL)!=pdPASS)preferences_running=false;
+    if(xTaskCreate(preference_task,"preferences",6144,NULL,1,NULL)!=pdPASS)preferences_running=false;
     esp_err_t e=dac_init();if(e){error("Audio hardware not ready. Check the board variant.");goto stopped;}
     i2s_chan_config_t cfg=I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0,I2S_ROLE_MASTER);cfg.dma_desc_num=8;cfg.dma_frame_num=511;cfg.auto_clear=true;
     e=i2s_new_channel(&cfg,&tx,NULL);if(e){error("Can't initialize audio output");goto stopped;}
@@ -195,8 +253,20 @@ static void task(void *arg){
         if(detached){if(!detach_signaled){detach_signaled=true;xSemaphoreGive(reload_done);}continue;}
         if(s.track<0||s.paused)continue;
         bool eof=decode(library->tracks[s.track].path,s.track);
-        if(eof && service(s.track)){pearl_state now=pearl_audio_state();int next=pearl_next(library,s.track,1);const pearl_album *a=&library->albums[library->tracks[s.track].album];
-            now.seconds=0;now.milliseconds=0;if(active_collection>=0){const pearl_collection *collection=&library->collections[active_collection];if((unsigned)(collection_position+1)>=collection->count)now.paused=true;else{collection_position++;now.track=collection->tracks[collection_position];playback_epoch++;}}else if(next==(int)a->first){now.paused=true;}else{now.track=next;playback_epoch++;}publish(now);save();}
+        if(eof && service(s.track)){
+            pearl_state now=pearl_audio_state();const media_item *item=pearl_media_item(library,s.track);
+            if(item&&media_kind_resumes(item->kind)) {
+                const media_representation *r=media_item_representation(item,"mp3");unsigned part=library->tracks[s.track].media_segment;
+                if(r&&part+1<r->count){seek_position(&now,r->segments[part+1].start_ms);now.paused=false;}
+                else{now.milliseconds=item->duration_ms;now.seconds=now.milliseconds/1000;now.completed=true;now.paused=true;}
+            } else {
+                int next=pearl_next(library,s.track,1);const pearl_album *album=&library->albums[library->tracks[s.track].album];
+                if(active_collection>=0){const pearl_collection *collection=&library->collections[active_collection];if((unsigned)(collection_position+1)>=collection->count)now.paused=true;else{collection_position++;select_position(&now,collection->tracks[collection_position],false,true);}}
+                else if(next<0||next<=s.track||next==(int)album->first)now.paused=true;
+                else select_position(&now,next,false,true);
+            }
+            publish(now);save();
+        }
     }
 stopped:
     stopping=true;
@@ -217,7 +287,7 @@ void pearl_audio_start(pearl_library *l){
     if(!commands)commands=xQueueCreate(16,sizeof(command));
     if(!state_lock||!prefs_lock||!reload_done||!commands){error("Not enough memory for playback");return;}
     xQueueReset(commands);stopping=detached=false;detach_signaled=false;active_collection=-1;
-    pearl_state s=pearl_audio_state();s.ready=false;s.paused=true;s.track=-1;s.seconds=s.milliseconds=0;s.error[0]=0;publish(s);
+    pearl_state s=pearl_audio_state();s.ready=false;select_position(&s,-1,false,false);persisted_track=persisted_volume=-2;publish(s);
     worker_running=true;
     if(xTaskCreatePinnedToCore(task,"audio",32768,NULL,5,NULL,1)!=pdPASS){worker_running=false;error("Not enough memory for playback task");}
 }

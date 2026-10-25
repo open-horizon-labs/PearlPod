@@ -1,8 +1,8 @@
 # PearlPod
 
-**PearlPod is a customizable pocket music player.** Install it on a CS43131 FakePod Nano, put your music on microSD, and listen through the 3.5 mm headphone jack. Browse albums and playlists on the touchscreen, read along in lyric mode, and give the player your name, colors, pictures and greetings.
+**PearlPod is a customizable pocket music and spoken-audio player.** Install it on a CS43131 FakePod Nano, put your music on microSD, and listen through the 3.5 mm headphone jack. Browse albums and playlists on the touchscreen, read along in lyric mode, and give the player your name, colors, pictures and greetings.
 
-It is part of [HiPhi.audio](https://hiphi.audio/pearlpod.html). Music plays directly from the card; WiFi is optional for copying Plex playlists from your home library.
+It is part of [HiPhi.audio](https://hiphi.audio/pearlpod.html). Music plays directly from the card; WiFi is optional for syncing prepared music, podcasts and audiobooks from your home library.
 
 [See the player and its features](https://hiphi.audio/pearlpod.html) · [Install over USB](https://hiphi.audio/flash/pearlpod/) · [Download firmware](https://github.com/open-horizon-labs/pearlpod-releases/releases) · [Buy the hardware](https://www.tindie.com/products/johnson/fakepod-nano-cnc-aluminum-amoled-audio-player/)
 
@@ -23,6 +23,7 @@ These are production firmware UI renders using Pearl’s personal anime-inspired
 ## Player features
 
 - **Music on microSD:** MP3, FLAC and WAV in ordinary folders. Browse by album, artist, folder or playlist; album and artist tags organize the library, and disc/track tags set album order.
+- **Podcasts and audiobooks:** separate library views, chapter selection, ±30-second seeking and durable per-item listening positions. The household service prepares compatible MP3; startup and sync stay paused. [Controls and sync details](docs/MEDIA-LIBRARY.md).
 - **Album artwork:** embedded MP3/FLAC covers or neighboring cover files appear in Browse and Now Playing. A theme illustration fills in during playback when art is missing.
 - **Touch and buttons:** swipe to browse, tap to play, use large playback controls, and adjust volume with the two physical buttons. Volume and the selected track survive restart.
 - **Playlists:** M3U, M3U8 and XSPF with local paths, preserving the chosen order and repeated songs.

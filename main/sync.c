@@ -1,4 +1,5 @@
 #include "sync.h"
+#include "media_pull.h"
 #include "tracer.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
@@ -39,6 +40,8 @@ void pearl_sync_trace(char *out,unsigned size) {
 }
 static atomic_uint elapsed, quiet, transferred;
 static pearl_transfer_progress content_progress;
+static atomic_bool universal_pull;
+static char pull_error[160];
 static portMUX_TYPE progress_lock=portMUX_INITIALIZER_UNLOCKED;
 static bool content_update(const char *json) {
   pearl_transfer_info info;
@@ -49,8 +52,13 @@ static bool content_update(const char *json) {
   if(ok&&!strcmp(info.kind,"saved"))ESP_LOGW("sync","Playlist saved: %s (%u/%u)",info.playlist,info.playlists_ready,info.playlist_count);
   return ok;
 }
+static bool pull_cancelled(void){return atomic_load(&cancel)||!pearl_network_connected();}
+static void pull_progress(const pearl_transfer_info *info){
+ taskENTER_CRITICAL(&progress_lock);pearl_progress_update(&content_progress,info,(uint32_t)(esp_timer_get_time()/1000));taskEXIT_CRITICAL(&progress_lock);
+ transferred=info->completed_bytes+info->file_bytes;
+}
 static const char *messages[] = {
- "Ready to sync\n\nAdd PP: playlists in Plex. Keep the library computer running. Pause music before starting.",
+ "Ready to sync\n\nChoose music, podcasts or books on the library computer. Pause playback before starting.",
  "Connecting to WiFi\nUsing your saved networks.",
  "Finding your library\nLooking for the library computer on WiFi.",
  "Waiting for your library\nThe computer is checking which files are needed.",
@@ -69,7 +77,7 @@ static const char *messages[] = {
 };
 pearl_sync_view pearl_sync_snapshot(void) {
   pearl_transfer_progress progress;
-  taskENTER_CRITICAL(&progress_lock);progress=content_progress;taskEXIT_CRITICAL(&progress_lock);
+  char error_copy[160];taskENTER_CRITICAL(&progress_lock);progress=content_progress;memcpy(error_copy,pull_error,sizeof(error_copy));taskEXIT_CRITICAL(&progress_lock);
   pearl_sync_view view={0};unsigned current=atomic_load(&stage);
   if(current==3) {
     pearl_progress_view(&progress,(uint32_t)(esp_timer_get_time()/1000),&view);
@@ -81,7 +89,7 @@ pearl_sync_view pearl_sync_snapshot(void) {
     const char *message=messages[current],*split=strchr(message,'\n');
     snprintf(view.title,sizeof(view.title),"%.*s",split?(int)(split-message):(int)strlen(message),message);
     snprintf(view.context,sizeof(view.context),"%s",split?split+1:"");
-    if(current==0)snprintf(view.detail,sizeof(view.detail),"Bring your playlists along");
+    if(current==0)snprintf(view.detail,sizeof(view.detail),"Bring music, podcasts and books along");
     if(current==4) {
       snprintf(view.title,sizeof(view.title),"%s",progress.info.playlist[0]?progress.info.playlist:"Your playlists");
       snprintf(view.detail,sizeof(view.detail),"Updating your library");
@@ -100,6 +108,9 @@ pearl_sync_view pearl_sync_snapshot(void) {
   view.playlists_ready=progress.info.playlists_ready;
   if((current==6||current==13||current==14||current==15)&&progress.known&&atomic_load(&transferred))
     snprintf(view.context,sizeof(view.context),"Completed songs are kept. Start sync to continue.");
+  if(universal_pull&&current==5&&progress.info.songs_total){snprintf(view.title,sizeof(view.title),"Your library is ready");snprintf(view.detail,sizeof(view.detail),"Music, podcasts and books are up to date");snprintf(view.context,sizeof(view.context),"Open your library to listen offline. WiFi is turning off.");}
+  if(universal_pull&&current==5&&!progress.info.songs_total){view.complete=false;view.determinate=false;snprintf(view.title,sizeof(view.title),"Nothing queued");snprintf(view.detail,sizeof(view.detail),"Choose music, podcasts or books");snprintf(view.context,sizeof(view.context),"Prepare your selection on the library computer, then sync again.");}
+  if(universal_pull&&current==6&&error_copy[0]){snprintf(view.title,sizeof(view.title),"Sync not finished");snprintf(view.detail,sizeof(view.detail),"%.95s",error_copy);snprintf(view.context,sizeof(view.context),"Existing library stays on the card. Retry to continue.");}
   view.busy=atomic_load(&busy);
   return view;
 }
@@ -222,6 +233,15 @@ static void task(void *arg) {
   if (!url[0]) { failure=10; goto done; }
   ESP_LOGW("sync","Selected library %s",url);
 
+  if(!probe_url[0]) {
+    stage=3;universal_pull=true;
+    char error_detail[160];pearl_pull_result pull=pearl_media_pull(url,"/sdcard/music",pull_cancelled,pull_progress,error_detail,sizeof(error_detail));
+    taskENTER_CRITICAL(&progress_lock);memcpy(pull_error,error_detail,sizeof(pull_error));taskEXIT_CRITICAL(&progress_lock);
+    if(pull==PEARL_PULL_OK){success=true;refresh_library=true;goto done;}
+    if(pull!=PEARL_PULL_UNSUPPORTED){failure=6;goto done;}
+    universal_pull=false; /* Only an unsupported endpoint permits legacy FTP. */
+    taskENTER_CRITICAL(&progress_lock);pearl_progress_reset(&content_progress);taskEXIT_CRITICAL(&progress_lock);
+  }
   mkdir("/sdcard/music/.pearl", 0755);
   mkdir("/sdcard/music/.pearl/objects", 0755);
   mkdir("/sdcard/music/.pearl/catalogs", 0755);
@@ -389,7 +409,7 @@ static bool start_sync(const char *override) {
   if (atomic_exchange(&busy,true))return false;
   snprintf(probe_url,sizeof(probe_url),"%s",override?override:"");
   pearl_trace_probe(override!=NULL);
-  cancel=false;
+  cancel=false;universal_pull=false;taskENTER_CRITICAL(&progress_lock);pull_error[0]=0;taskEXIT_CRITICAL(&progress_lock);
   elapsed=quiet=transferred=0;
   taskENTER_CRITICAL(&progress_lock);pearl_progress_reset(&content_progress);taskEXIT_CRITICAL(&progress_lock);
   pearl_ftp_set_progress_handler(content_update);

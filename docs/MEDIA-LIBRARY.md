@@ -1,0 +1,23 @@
+# Music, podcasts and audiobooks
+
+The listener can choose music, episodes or books offline. A household member prepares the collection on the library computer, then explicitly starts **Sync now** on PearlPod. Startup, sync completion, chapter selection while paused, and restart while paused never start playback automatically.
+
+Music retains ordinary MP3/FLAC/WAV folders, album/artist views, M3U/M3U8/XSPF playlists, lyrics, volume and saved selected track. Selecting music starts at its beginning. Podcasts appear under their show; books have their own view. Each spoken item has a separate durable listening position and completion flag. Split files share one timeline, chapter list and progress record. **−30s**, **+30s**, **Chapters** and **Restart** act on that timeline. Pressing Play on a finished item starts again; finishing an episode or book pauses instead of starting another item.
+
+The household service prepares MP3 for spoken audio. This firmware does not decode AAC/M4B. MP3 uses the existing decoder's indexed callback extension; FLAC/WAV retain native decoders and their actual frame-seek APIs. Spoken progress is saved on pause, seek, item changes, completion and orderly shutdown, and periodically during playback. An abrupt loss of power may lose roughly the last eight seconds. A failed progress write pauses with a card-space message rather than silently moving to another item.
+
+## Sync contract
+
+PearlPod requests `/media-library/v1/catalog?device=pearlpod` from the existing health-selected library computer. The version-1 typed catalog identifies music/podcast/audiobook items, source scope, compatible representations, human-readable segment paths, chapters, optional artwork and album/playlist/show/series collections. Object requests use `/media-library/v1/objects/<revision>/<encoded-path>` with Range and If-Range. SHA-256 and a strong ETag bind every segment to its immutable representation.
+
+The shared coordinator uses the actual asynchronous durable writer. It checkpoints accepted durable bytes, resumes interruptions, verifies complete files and publishes through staged rename with a retained previous file. Only HTTP-owned files can be repaired; unrelated existing card files are protected, including after repeated failed syncs. Audio is released before transport and replacement. Only after all requested objects verify does the active catalog change. A private ownership registry prevents incomplete or older generations appearing as ordinary music. They are also excluded from physical Play, restored selection and next-track traversal.
+
+Only HTTP 404 enables the legacy FTP receiver. Preparation-pending 503, account ambiguity, connection failure, malformed catalogs, hash failure, cancellation or full cards retain the existing library and offer retry. A damaged active catalog can recover its previous copy with an explicit recovery message. Allocation failure rejects the candidate library; the active in-memory snapshot stays intact. The shared model bounds catalogs at 4,096 items, 1,024 collections, 4,096 references per collection, 512 segments per representation and 2 MiB JSON; available device memory can impose a lower practical limit. The ordinary music scanner is not truncated to those typed-catalog limits.
+
+No new authentication screen is introduced. Host-side source authorization and selected-listener scoping remain the library service's responsibility. Building requires access to the private shared dependency; no private service source is included here.
+
+## Boundaries and checks
+
+Retained prior generations and abandoned downloads are not automatically deleted. A full card therefore needs household cleanup; sync reports failure and preserves the current library. Real-device listening, sudden physical power loss and SD timing under this new flow remain unqualified: this change was tested silently with native decoders, production UI rendering and an ESP-IDF build, without flashing or audio output.
+
+Run `tools/check_media.sh` after the pinned ESP-IDF environment is loaded, with FFmpeg available. It compiles the production command routines and actual Pearl HTTP adapter against deterministic HTTP/hardware seams, real shared parser/coordinator and threaded durable writer. It exercises pause/resume/chapters, interrupted Range/If-Range resume, 503/404, hash/ETag, ownership/repair, catalog publication and cancellation. Four silent MP3 cases compare indexed seek PCM byte-for-byte with full decoding (mono/stereo, CBR/VBR). `tools/check.sh` covers actual overlay construction, durable progress, music isolation and allocation failures; `tools/render_ui.sh` renders and operates the production LVGL spoken screens alongside existing regression scenes.
